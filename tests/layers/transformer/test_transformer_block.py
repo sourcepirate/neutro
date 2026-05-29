@@ -9,3 +9,20 @@ def test_transformer_block():
     
     grad = layer.backward(np.random.rand(2, 5, 16))
     assert grad.shape == (2, 5, 16)
+
+def test_transformer_block_pre_norm():
+    layer = TransformerBlock(embed_dim=16, num_heads=2, ff_dim=32, pre_norm=True)
+    layer.build((2, 5, 16))
+    x = np.random.rand(2, 5, 16)
+    out = layer(x)
+    assert out.shape == (2, 5, 16)
+    
+    grad = layer.backward(np.random.rand(2, 5, 16))
+    assert grad.shape == (2, 5, 16)
+
+def test_transformer_block_flash():
+    layer = TransformerBlock(embed_dim=16, num_heads=2, ff_dim=32, use_flash=True)
+    layer.build((2, 5, 16))
+    x = np.random.rand(2, 5, 16)
+    out = layer(x)
+    assert out.shape == (2, 5, 16)

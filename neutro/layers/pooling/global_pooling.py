@@ -5,6 +5,9 @@ class GlobalAveragePooling2D(Layer):
     """
     Global average pooling operation for spatial data.
     """
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], input_shape[-1])
+
     def forward(self, inputs, training=False):
         self.input_shape_internal = inputs.shape
         # inputs: (batch, h, w, c)
@@ -19,6 +22,9 @@ class GlobalMaxPooling2D(Layer):
     """
     Global max pooling operation for spatial data.
     """
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], input_shape[-1])
+
     def forward(self, inputs, training=False):
         self.inputs = inputs
         # inputs: (batch, h, w, c)

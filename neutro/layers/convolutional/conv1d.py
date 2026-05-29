@@ -35,6 +35,16 @@ class Conv1D(Layer):
         self.params['b'] = self.bias_initializer((self.filters,))
         super().build(input_shape)
 
+    def compute_output_shape(self, input_shape):
+        batch, steps, c = input_shape
+        k = self.kernel_size[0]
+        s = self.strides[0]
+        padding = 0
+        if self.padding == 'same':
+            padding = (k - 1) // 2
+        out_steps = (steps + 2*padding - k) // s + 1
+        return (batch, out_steps, self.filters)
+
     def forward(self, inputs, training=False):
         self.inputs = inputs
         batch, steps, c = inputs.shape

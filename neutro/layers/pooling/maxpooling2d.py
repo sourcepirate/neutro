@@ -16,6 +16,14 @@ class MaxPooling2D(Layer):
         strides = strides if strides else self.pool_size
         self.strides = strides if isinstance(strides, (tuple, list)) else (strides, strides)
 
+    def compute_output_shape(self, input_shape):
+        batch, h, w, c = input_shape
+        ph, pw = self.pool_size
+        sh, sw = self.strides
+        oh = (h - ph) // sh + 1
+        ow = (w - pw) // sw + 1
+        return (batch, oh, ow, c)
+
     def forward(self, inputs, training=False):
         self.inputs = inputs
         batch, h, w, c = inputs.shape
