@@ -19,12 +19,16 @@ class MultiHeadAttention(BaseAttention):
     def _split_heads(self, x, batch_size):
         return x.reshape(batch_size, -1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
 
-    def forward(self, query, value=None, key=None, mask=None, training=False):
+    def forward(self, query, value=None, key=None, mask=None, training=False, kv_cache=None, layer_id=None):
         if value is None: value = query
         if key is None: key = value
         self.query, self.key, self.value, batch_size = query, key, value, query.shape[0]
         self.Q_raw, self.K_raw, self.V_raw = np.dot(query, self.params['Wq']), np.dot(key, self.params['Wk']), np.dot(value, self.params['Wv'])
         Q, K, V = self._split_heads(self.Q_raw, batch_size), self._split_heads(self.K_raw, batch_size), self._split_heads(self.V_raw, batch_size)
+        
+        if kv_cache is not None and layer_id is not None:
+            K, V = kv_cache.update(K, V, layer_id)
+
         self.attn_output = self.scaled_dot_product_attention(Q, K, V, mask)
         out = self.attn_output.transpose(0, 2, 1, 3).reshape(batch_size, -1, self.key_dim)
         self.pre_output = out

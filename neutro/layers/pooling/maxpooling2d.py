@@ -13,7 +13,8 @@ class MaxPooling2D(Layer):
     def __init__(self, pool_size=(2, 2), strides=None, **kwargs):
         super().__init__(**kwargs)
         self.pool_size = pool_size if isinstance(pool_size, (tuple, list)) else (pool_size, pool_size)
-        self.strides = strides if strides else self.pool_size
+        strides = strides if strides else self.pool_size
+        self.strides = strides if isinstance(strides, (tuple, list)) else (strides, strides)
 
     def forward(self, inputs, training=False):
         self.inputs = inputs

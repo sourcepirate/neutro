@@ -1,5 +1,6 @@
 import numpy as np
 from ..base import Layer
+from ...utils.rope_utils import precompute_freqs_cis, apply_rotary_emb
 
 class FlashAttention(Layer):
     """
@@ -8,12 +9,13 @@ class FlashAttention(Layer):
     
     Args:
         num_heads: Number of attention heads.
-        head_dim: Dimension of each attention head.
+        key_dim: Total dimension of all heads.
         block_size_r: Block size for the outer loop (rows of Q).
         block_size_c: Block size for the inner loop (columns of K, V).
         dropout: Dropout probability.
+        use_rope: Whether to use Rotary Positional Embeddings.
     """
-    def __init__(self, num_heads, key_dim, block_size_r=64, block_size_c=64, dropout=0.0):
+    def __init__(self, num_heads, key_dim, block_size_r=64, block_size_c=64, dropout=0.0, use_rope=False):
         super().__init__()
         self.num_heads = num_heads
         self.key_dim = key_dim
@@ -21,6 +23,7 @@ class FlashAttention(Layer):
         self.block_size_r = block_size_r
         self.block_size_c = block_size_c
         self.dropout_rate = dropout
+        self.use_rope = use_rope
         self.scale = 1.0 / np.sqrt(self.head_dim)
 
     def build(self, input_shape):
@@ -32,7 +35,7 @@ class FlashAttention(Layer):
         self.params['Wo'] = np.random.randn(self.key_dim, self.embed_dim) * 0.02
         super().build(input_shape)
 
-    def forward(self, x, mask=None, training=False):
+    def forward(self, x, mask=None, training=False, kv_cache=None, layer_id=None):
         self.x = x
         self.mask = mask
         batch_size, seq_len, _ = x.shape
@@ -45,9 +48,35 @@ class FlashAttention(Layer):
         K = (x @ self.params['Wk']).reshape(batch_size, seq_len, H, d).transpose(0, 2, 1, 3)
         V = (x @ self.params['Wv']).reshape(batch_size, seq_len, H, d).transpose(0, 2, 1, 3)
 
+        if self.use_rope:
+            # When using cache, we need the total sequence length for RoPE
+            total_seq_len = seq_len
+            if kv_cache and layer_id in kv_cache.k_cache:
+                total_seq_len += kv_cache.k_cache[layer_id].shape[2]
+            
+            self.freqs_cis = precompute_freqs_cis(self.head_dim, total_seq_len)
+            # Apply RoPE only to the new tokens
+            # During generation, seq_len is 1, so we take the last freqs_cis
+            if seq_len == 1 and total_seq_len > 1:
+                f_cis = self.freqs_cis[total_seq_len-1:total_seq_len]
+            else:
+                f_cis = self.freqs_cis[:seq_len]
+                
+            Q = apply_rotary_emb(Q, f_cis)
+            K = apply_rotary_emb(K, f_cis)
+
+        # Update and get from cache
+        if kv_cache is not None and layer_id is not None:
+            K, V = kv_cache.update(K, V, layer_id)
+            # Update seq_len for the rest of the calculation
+            seq_len_kv = K.shape[2]
+        else:
+            seq_len_kv = seq_len
+
         self.Q, self.K, self.V = Q, K, V
         
         # Initialize output and statistics
+        # Note: O is (batch, H, seq_len_q, d)
         O = np.zeros_like(Q)
         L = np.zeros((batch_size, H, seq_len, 1))
         M = np.full((batch_size, H, seq_len, 1), -np.inf)
@@ -56,10 +85,10 @@ class FlashAttention(Layer):
         Br = self.block_size_r
         Bc = self.block_size_c
         Tr = (seq_len + Br - 1) // Br
-        Tc = (seq_len + Bc - 1) // Bc
+        Tc = (seq_len_kv + Bc - 1) // Bc
 
         for j in range(Tc):
-            j_start, j_end = j * Bc, min((j + 1) * Bc, seq_len)
+            j_start, j_end = j * Bc, min((j + 1) * Bc, seq_len_kv)
             Kj = K[:, :, j_start:j_end, :] # (batch, H, Bc, d)
             Vj = V[:, :, j_start:j_end, :] # (batch, H, Bc, d)
 
@@ -74,7 +103,7 @@ class FlashAttention(Layer):
                 S_ij = self.scale * (Qi @ Kj.transpose(0, 1, 3, 2)) # (batch, H, Br, Bc)
                 
                 if mask is not None:
-                    # Masking: mask is expected to be (seq_len, seq_len) or broadcastable
+                    # Masking: mask is expected to be (seq_len_q, seq_len_kv)
                     m_tile = mask[i_start:i_end, j_start:j_end]
                     S_ij -= 1e9 * m_tile
                 
@@ -162,6 +191,10 @@ class FlashAttention(Layer):
             
             dK[:, :, j_start:j_end, :] = dkj
             dV[:, :, j_start:j_end, :] = dvj
+            
+        if self.use_rope:
+            dQ = apply_rotary_emb(dQ, np.conj(self.freqs_cis))
+            dK = apply_rotary_emb(dK, np.conj(self.freqs_cis))
         
         # Map back to weights
         dq_flat = dQ.transpose(0, 2, 1, 3).reshape(-1, K_dim)

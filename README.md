@@ -1,6 +1,6 @@
 # 🧠 Neutro: The "Old School" Deep Learning Playground
 
-![Coverage](https://img.shields.io/badge/coverage-96%25-brightgreen)
+[![codecov](https://codecov.io/gh/sourcepirate/neutro/graph/badge.svg?token=8H4Q2Q2Q2Q)](https://codecov.io/gh/sourcepirate/neutro)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Neutro** is a intentionally naive, NumPy-only implementation of modern deep learning architectures. It’s the Keras experience you love, powered by the NumPy you tolerate, built specifically for people who want to peek under the hood and actually *understand* how the gears turn.
@@ -32,11 +32,20 @@ Let's be honest: modern DL frameworks are black boxes. You pip install 4GB of bi
 
 | Category | The "Fancy" Stuff | Why You Should Care |
 | :--- | :--- | :--- |
-| **Attention** | `FlashAttention`, `MQA`, `GQA` | We have more attention variants than a distracted toddler. |
-| **Vision** | `Conv2D`, `im2col`, `DataAugmentation` | Vectorized spatial operations that actually run fast. |
-| **Recurrent** | `LSTM`, `SimpleRNN` | For when you want to remember things (until you forget them). |
-| **Modern Optimizers** | `AdamW`, `Adam`, `SGD+Momentum` | Keep your weights from exploding like a bad science fair project. |
-| **Normalization** | `BatchNorm`, `LayerNorm` | Keeping your distributions as stable as your coffee intake. |
+| **Attention** | `FlashAttention`, `MQA`, `GQA`, `RoPE` | We have more attention variants than a distracted toddler. |
+| **Vision** | `AlexNet`, `VGG16`, `VGG19`, `im2col` | Classical and modern vision architectures, vectorized. |
+| **LLMs** | `Llama`, `Qwen`, `DeepSeek` (MoE) | Yes, you can run a (very tiny) MoE model on your CPU. |
+| **Modern Ops** | `RMSNorm`, `SiLU`, `SwiGLU` | The secret sauce of modern LLMs, hand-implemented. |
+| **Optimizers** | `AdamW`, `Adam`, `SGD+Momentum` | Keep your weights from exploding like a bad science fair project. |
+
+---
+
+## 🏆 The Hall of Fame: Pre-built Architectures
+
+Why build from scratch when we've already done the heavy lifting?
+
+- **The Visionaries**: `AlexNet`, `VGG16`, `VGG19`
+- **The Linguists**: `GPT-2`, `LlamaTiny`, `QwenTiny`, `DeepSeekTiny` (Mixture of Experts)
 
 ---
 

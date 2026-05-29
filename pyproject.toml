@@ -18,5 +18,4 @@ dependencies = [
 test = [
     "pytest",
     "pytest-cov",
-    "genbadge[coverage]",
 ]

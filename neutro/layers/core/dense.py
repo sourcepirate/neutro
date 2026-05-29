@@ -19,6 +19,9 @@ class Dense(Layer):
             self.params['b'] = self.bias_initializer((self.units,))
         super().build(input_shape)
 
+    def compute_output_shape(self, input_shape):
+        return tuple(list(input_shape)[:-1] + [self.units])
+
     def forward(self, inputs, training=False):
         self.inputs = inputs
         self.z = np.dot(inputs, self.params['W'])

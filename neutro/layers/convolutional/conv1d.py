@@ -1,6 +1,7 @@
 import numpy as np
 from ..base import Layer
 from ...initializers import get as get_initializer
+from ...activations import get as get_activation
 from ...utils.conv_utils import im2col_indices, col2im_indices
 
 class Conv1D(Layer):
@@ -22,7 +23,7 @@ class Conv1D(Layer):
         self.kernel_size = kernel_size if isinstance(kernel_size, (tuple, list)) else (kernel_size,)
         self.strides = strides if isinstance(strides, (tuple, list)) else (strides,)
         self.padding = padding
-        self.activation = activation 
+        self.activation = get_activation(activation)
         self.kernel_initializer = get_initializer(kernel_initializer)
         self.bias_initializer = get_initializer(bias_initializer)
 
@@ -57,9 +58,18 @@ class Conv1D(Layer):
         
         out = res.reshape(f, out_steps, 1, batch).transpose(3, 1, 2, 0).squeeze(2)
         self.z = out
+        
+        if self.activation:
+            return self.activation(out)
         return out
 
     def backward(self, grad_output):
+        if self.activation:
+            if hasattr(self.activation, 'gradient_fast'):
+                grad_output = self.activation.gradient_fast(self.z, grad_output)
+            else:
+                grad_output = grad_output * self.activation.gradient(self.z)
+                
         # grad_output shape: (batch, out_steps, f)
         batch, out_steps, f = grad_output.shape
         k, c, _ = self.params['W'].shape

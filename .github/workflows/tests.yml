@@ -34,16 +34,10 @@ jobs:
       run: |
         pytest --cov=neutro --cov-report=xml
         
-    - name: Generate coverage badge
+    - name: Upload coverage to Codecov
       if: github.event_name == 'push' && matrix.python-version == '3.12'
-      run: |
-        genbadge coverage -i coverage.xml -o coverage.svg
-        
-    - name: Commit badge
-      if: github.event_name == 'push' && matrix.python-version == '3.12'
-      run: |
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        git add coverage.svg
-        git commit -m "Update coverage badge" || exit 0
-        git push
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        fail_ci_if_error: true
+        token: ${{ secrets.CODECOV_TOKEN }}

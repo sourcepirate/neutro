@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.ndimage import rotate, shift
+from ..data import DataLoader
 
 class ImageDataGenerator:
     """
@@ -32,7 +33,6 @@ class ImageDataGenerator:
         """
         Takes data & label arrays, generates batches of augmented data.
         """
-        from ..data import DataLoader
         return DataLoader(x, y, batch_size=batch_size, shuffle=shuffle, augmenter=self)
 
     def apply_transform(self, x):

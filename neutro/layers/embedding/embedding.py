@@ -11,6 +11,9 @@ class Embedding(Layer):
         self.params['embeddings'] = np.random.normal(0, 0.01, (self.input_dim, self.output_dim))
         super().build(input_shape)
 
+    def compute_output_shape(self, input_shape):
+        return tuple(list(input_shape) + [self.output_dim])
+
     def forward(self, inputs, training=False):
         self.inputs = inputs.astype(int)
         return self.params['embeddings'][self.inputs]
