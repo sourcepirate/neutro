@@ -1,60 +1,99 @@
-# Neutro
+# 🧠 Neutro: The "Old School" Deep Learning Playground
 
-![Coverage](coverage.svg)
+![Coverage](https://img.shields.io/badge/coverage-96%25-brightgreen)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A high-performance, Keras-identical deep learning library implemented from scratch using **NumPy** and **SciPy**.
+**Neutro** is a intentionally naive, NumPy-only implementation of modern deep learning architectures. It’s the Keras experience you love, powered by the NumPy you tolerate, built specifically for people who want to peek under the hood and actually *understand* how the gears turn.
 
-## Core Algorithms & Implementations
+---
 
-| Category | Component | Algorithm / Technique | Scientific Reference |
-| :--- | :--- | :--- | :--- |
-| **Convolutional** | `Conv2D`, `Conv1D` | `im2col` Vectorization | [CS231n](https://cs231n.github.io/convolutional-networks/#conv) |
-| **Attention** | `MultiHeadAttention` | Scaled Dot-Product | [Vaswani et al. (2017)](https://arxiv.org/abs/1706.03762) |
-| **Attention** | `MultiQueryAttention` | Shared KV heads | [Shazeer (2019)](https://arxiv.org/abs/1911.02150) |
-| **Attention** | `GroupedQueryAttention` | Grouped KV heads | [Ainslie et al. (2023)](https://arxiv.org/abs/2305.13245) |
-| **Attention** | `FlashAttention` | Tiling & Online Softmax | [Dao et al. (2022)](https://arxiv.org/abs/2205.14135) |
-| **Recurrent** | `LSTM` | Gated Memory Cells | [Hochreiter (1997)](https://www.bioinf.jku.at/publications/older/2604.pdf) |
-| **Normalization** | `BatchNormalization` | Running Stats (Spatial) | [Ioffe & Szegedy (2015)](https://arxiv.org/abs/1502.03167) |
-| **Normalization** | `LayerNormalization` | Per-sample Stats | [Ba et al. (2016)](https://arxiv.org/abs/1607.06450) |
-| **Optimizers** | `AdamW` | Decoupled Weight Decay | [Loshchilov (2017)](https://arxiv.org/abs/1711.05101) |
-| **Optimizers** | `Adam` | Adaptive Moments | [Kingma (2014)](https://arxiv.org/abs/1412.6980) |
-| **Models** | `Sequential`, `Model` | Backpropagation / Keras API | [Keras (Chollet)](https://keras.io) |
+## 👴 The Philosophy: Why Does This Exist?
 
-## Documentation Guide
+Let's be honest: modern DL frameworks are black boxes. You pip install 4GB of binaries and suddenly you're "doing AI." 
 
-Detailed technical explanations, mathematical derivations, and citations for every component:
+**Neutro is for the curious, the learners, and the "old-school" folks like me** who believe that if you can't build it in a matrix, you don't really know it. 
 
-- [**Activations**](./docs/activations/) - Softmax gradients, ReLU, Sigmoid, Tanh.
-- [**Attention Mechanisms**](./docs/layers/attention/) - MHA, MQA, GQA, FlashAttention.
-- [**Convolutional Layers**](./docs/layers/convolutional/) - Vectorization via `im2col`.
-- [**Normalization**](./docs/layers/normalization/) - BatchNorm vs LayerNorm.
-- [**Recurrent Layers**](./docs/layers/recurrent/) - LSTM and SimpleRNN.
-- [**Optimizers**](./docs/optimizers/) - Adam, AdamW, and SGD with Momentum.
-- [**Data & Models**](./docs/models/) - DataLoader, Sequential, and Model serialization.
+- **Learn, Don't just Run**: Every line of code is designed to be readable. We don't hide behind C++ kernels or CUDA kernels. If you want to know how FlashAttention *actually* tiles memory, you can just read the Python file.
+- **A Toy, not a Tool**: This isn't meant for production. It's a playground for learning advanced algorithms (MHA, GQA, FlashAttention, LSTM) in their purest form.
+- **For the Wisdom-Rich**: If you remember when 64MB of RAM was a flex and "vectorization" meant loop unrolling, this is for you. It's a fun way to play with cutting-edge 2024 algorithms using 1990s-era clarity.
 
-## Features
-- **Identical API**: Full support for `.compile()`, `.fit()`, `.evaluate()`, and `.predict()`.
-- **High Performance**: Vectorized operations using `im2col` for Convolutions and broadcasting for Attention.
-- **Transformer Ready**: Built-in `TransformerBlock`, `MHA`, and `LayerNormalization`.
-- **Extensive Coverage**: >95% unit test coverage for every internal class.
+---
 
-## Installation
-```bash
-pip install -e .
-```
+## 🚀 What's Inside?
 
-## Example Usage
+- **"I can't believe it's not Keras!"**: Your muscle memory is safe here. `.compile()`, `.fit()`, `.predict()`—it’s all exactly where you left it.
+- **Pure NumPy Math**: We did the math so you don't have to. Every gradient, from Softmax to LSTM gates, is hand-derived and vectorized.
+- **Speed (for a CPU)**: We use `im2col` for convolutions and **FlashAttention** (yes, really) to keep your CPU fans humming in a way that sounds productive.
+- **Zero Heavy Dependencies**: Tired of downloading 4GB of CUDA binaries just to train on MNIST? We require exactly `numpy` and `scipy`. That’s it.
+
+---
+
+## 🛠 Features That'll Make You Say "Wait, You Implemented That?"
+
+| Category | The "Fancy" Stuff | Why You Should Care |
+| :--- | :--- | :--- |
+| **Attention** | `FlashAttention`, `MQA`, `GQA` | We have more attention variants than a distracted toddler. |
+| **Vision** | `Conv2D`, `im2col`, `DataAugmentation` | Vectorized spatial operations that actually run fast. |
+| **Recurrent** | `LSTM`, `SimpleRNN` | For when you want to remember things (until you forget them). |
+| **Modern Optimizers** | `AdamW`, `Adam`, `SGD+Momentum` | Keep your weights from exploding like a bad science fair project. |
+| **Normalization** | `BatchNorm`, `LayerNorm` | Keeping your distributions as stable as your coffee intake. |
+
+---
+
+## 💻 Show Me The Code!
+
+If you know Keras, you already know Neutro. It's that simple.
+
 ```python
 from neutro.models import Sequential
-from neutro.layers import Conv2D, MaxPooling2D, Flatten, Dense
+from neutro.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
 
+# Build a CNN that actually fits in your head
 model = Sequential([
-    Conv2D(32, kernel_size=3, padding='same', activation='relu', input_shape=(28, 28, 1)),
+    Conv2D(32, kernel_size=3, activation='relu', input_shape=(28, 28, 1)),
     MaxPooling2D(pool_size=2),
     Flatten(),
+    Dense(128, activation='relu'),
+    Dropout(0.5),
     Dense(10, activation='softmax')
 ])
 
+# Compile it like it's 2015
 model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-model.fit(x_train, y_train, epochs=5, batch_size=32)
+
+# Fit it like a tailored suit
+model.fit(train_flow, epochs=10)
 ```
+
+---
+
+## 📂 Deep Dives & Nerdy Stuff
+
+We documented everything because we know you like to check the math:
+
+- [**Attention Mechanisms**](./docs/layers/attention/) - How we made FlashAttention work on a CPU.
+- [**Convolutional Magic**](./docs/layers/convolutional/) - The `im2col` deep dive.
+- [**Activations & Gradients**](./docs/activations/) - Proofs for the brave.
+- [**Optimizers**](./docs/optimizers/) - Why AdamW is better than your ex.
+
+---
+
+## 🧪 Examples to Flex Your CPU
+
+Check out the `examples/` folder for end-to-end scripts:
+- `mnist_cnn.py`: Standard digit classification with real-time augmentation.
+- `wikitext_llm.py`: A character-level Transformer that actually talks back.
+
+---
+
+## 🏗 Installation
+
+```bash
+git clone https://github.com/yourusername/np_keras.git
+cd np_keras
+pip install -e .
+```
+
+---
+
+**Disclaimer**: This is a hobby project for learning and exploration. It is intentionally naive, likely inefficient compared to compiled kernels, and 100% focused on the joy of understanding advanced algorithms. If you're looking to change the world with AGI, go to PyTorch. If you're looking to understand why your Transformer works while drinking a nice cup of tea, you're in the right place.
