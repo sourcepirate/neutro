@@ -89,8 +89,8 @@ Check out the `examples/` folder for end-to-end scripts:
 ## 🏗 Installation
 
 ```bash
-git clone https://github.com/yourusername/np_keras.git
-cd np_keras
+git clone https://github.com/sourcepirate/neutro.git
+cd neutro
 pip install -e .
 ```
 
