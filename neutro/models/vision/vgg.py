@@ -13,6 +13,14 @@ def VGG16(input_shape=(224, 224, 3), num_classes=1000, data_format='channels_las
     VGG16: The "All 3x3" champion.
     The Oxford team decided that if one 3x3 kernel is good, 
     sixteen of them must be better. They weren't wrong.
+
+    Args:
+        input_shape: Shape of one image. Use (H, W, C) for ``channels_last``
+            and (C, H, W) for ``channels_first``.
+        num_classes: Number of output classes.
+        data_format: Either ``channels_last`` or ``channels_first``.
+            This controls whether VGG expects image tensors as
+            ``(N, H, W, C)`` or ``(N, C, H, W)``.
     """
     layers = []
     # Block 1
@@ -38,12 +46,21 @@ def VGG16(input_shape=(224, 224, 3), num_classes=1000, data_format='channels_las
         Softmax()
     ])
     
-    # Set the input shape for the first layer
-    model.layers[0].input_shape = input_shape
+    # Set batch-aware input shape so summary() can infer layer shapes.
+    model.layers[0].input_shape = (None,) + input_shape
     return model
 
 def VGG19(input_shape=(224, 224, 3), num_classes=1000, data_format='channels_last'):
-    """VGG19: Because 16 layers just didn't feel deep enough."""
+    """VGG19: Because 16 layers just didn't feel deep enough.
+
+    Args:
+        input_shape: Shape of one image. Use (H, W, C) for ``channels_last``
+            and (C, H, W) for ``channels_first``.
+        num_classes: Number of output classes.
+        data_format: Either ``channels_last`` or ``channels_first``.
+            This controls whether VGG expects image tensors as
+            ``(N, H, W, C)`` or ``(N, C, H, W)``.
+    """
     layers = []
     layers.extend(_vgg_block(64, 2, data_format))
     layers.extend(_vgg_block(128, 2, data_format))
@@ -61,5 +78,5 @@ def VGG19(input_shape=(224, 224, 3), num_classes=1000, data_format='channels_las
         Dense(num_classes),
         Softmax()
     ])
-    model.layers[0].input_shape = input_shape
+    model.layers[0].input_shape = (None,) + input_shape
     return model

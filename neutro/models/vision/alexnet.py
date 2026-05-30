@@ -6,6 +6,14 @@ def AlexNet(input_shape=(227, 227, 3), num_classes=1000, data_format='channels_l
     AlexNet: The 2012 Grandfather of modern CNNs.
     Back then, we thought 11x11 kernels were a good idea. 
     It was a simpler time.
+
+    Args:
+        input_shape: Shape of one image. Use (H, W, C) for ``channels_last``
+            and (C, H, W) for ``channels_first``.
+        num_classes: Number of output classes.
+        data_format: Either ``channels_last`` or ``channels_first``.
+            This controls whether AlexNet expects image tensors as
+            ``(N, H, W, C)`` or ``(N, C, H, W)``.
     """
     model = Sequential([
         # Layer 1: Large kernels for the "Big Picture"

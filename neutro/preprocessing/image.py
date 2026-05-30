@@ -14,6 +14,11 @@ class ImageDataGenerator:
         vertical_flip: Randomly flip inputs vertically.
         rescale: Rescaling factor. If None or 0, no rescaling is applied, 
                  otherwise we multiply the data by the value provided.
+        data_format: One of ``channels_last`` or ``channels_first``.
+            ``channels_last`` expects images as ``(N, H, W, C)``,
+            while ``channels_first`` expects ``(N, C, H, W)``.
+            Internally transforms are applied in channels-last format and
+            returned in the same format as provided.
     """
     def __init__(self, 
                  rotation_range=0, 
@@ -52,7 +57,14 @@ class ImageDataGenerator:
     def apply_transform(self, x):
         """
         Applies a transformation to an image.
-        x: (H, W, C)
+
+        Args:
+            x: Single image tensor in the configured layout.
+                ``channels_last`` expects ``(H, W, C)``,
+                ``channels_first`` expects ``(C, H, W)``.
+
+        Returns:
+            Augmented image tensor in the same layout as ``x``.
         """
         img = self._to_channels_last(x.copy().astype(np.float32))
         
