@@ -9,4 +9,4 @@ class SparseAccuracy(Metric):
         return np.mean(y_true == y_pred_labels)
         
     def get_name(self):
-        return "accuracy"
+        return "sparse_accuracy"

@@ -14,8 +14,10 @@ class SparseCategoricalCrossentropy(Loss):
         
         # Flatten if necessary
         if y_true.ndim < y_pred.ndim - 1:
-             # handle cases where y_true is missing the seq dimension if y_pred has it
-             pass 
+            raise ValueError(
+                f"Shape mismatch: y_true has {y_true.ndim} dimension(s) but y_pred has "
+                f"{y_pred.ndim} dimensions. y_true must have exactly y_pred.ndim - 1 dimensions."
+            )
 
         # We use advanced indexing to pick the probabilities of the true labels
         # Reshape to 2D for easier indexing: (N, C)

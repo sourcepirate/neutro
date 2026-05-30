@@ -1,5 +1,4 @@
 import regex as re
-import numpy as np
 import base64
 
 def get_stats(ids):

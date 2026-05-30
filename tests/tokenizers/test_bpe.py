@@ -41,9 +41,8 @@ def test_regex_tokenizer_special_tokens():
     decoded = tokenizer.decode(encoded)
     assert decoded == text
 
-def test_save_load():
-    import os
-    prefix = "test_tokenizer"
+def test_save_load(tmp_path):
+    prefix = str(tmp_path / "test_tokenizer")
     tokenizer = RegexTokenizer()
     tokenizer.train("simple text for training", vocab_size=260)
     tokenizer.register_special_tokens({"[SEP]": 1001})
@@ -57,8 +56,6 @@ def test_save_load():
     assert new_tokenizer.special_tokens == tokenizer.special_tokens
     assert new_tokenizer.encoder == tokenizer.encoder
     assert new_tokenizer.decoder == tokenizer.decoder
-    
-    os.remove(f"{prefix}.json")
 
 def test_tokenization_consistency():
     tokenizer = RegexTokenizer()

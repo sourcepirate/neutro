@@ -16,10 +16,7 @@ def load_tiktoken_bpe(tiktoken_bpe_file):
         local_path = os.path.join(cache_dir, filename)
         if not os.path.exists(local_path):
             print(f"Downloading {tiktoken_bpe_file}...")
-            # Handle SSL certificate issues on some systems (like macOS)
-            import ssl
-            context = ssl._create_unverified_context()
-            with urllib.request.urlopen(tiktoken_bpe_file, context=context) as response, open(local_path, 'wb') as out_file:
+            with urllib.request.urlopen(tiktoken_bpe_file, timeout=30) as response, open(local_path, 'wb') as out_file:
                 out_file.write(response.read())
         tiktoken_bpe_file = local_path
 

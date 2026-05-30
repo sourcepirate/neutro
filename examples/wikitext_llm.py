@@ -62,14 +62,6 @@ def train_wikitext_llm(tokenizer_type="bpe", vocab_size=2048, epochs=1):
     print("Preparing data...")
     x, y = prepare_data(text, tokenizer, seq_len=seq_len)
     
-    # One-hot encode targets for categorical_crossentropy
-    # To save memory in demo, we could use a custom loss or smaller subset
-    # But let's follow the API. (batch, seq, vocab)
-    
-    # Note: Our current categorical_crossentropy expects (batch, classes)
-    # For sequence tasks, we might need to flatten or update the loss.
-    # Let's check the loss implementation.
-    
     print("Building Transformer LLM...")
     model = Sequential([
         Embedding(vocab_size, 128, input_shape=(seq_len,)),
@@ -86,8 +78,6 @@ def train_wikitext_llm(tokenizer_type="bpe", vocab_size=2048, epochs=1):
     # Small subset for demo
     x_sub = x[:1000]
     y_sub = y[:1000]
-    
-    # We no longer need one-hot encoding!
     
     model.fit(x_sub, y_sub, epochs=epochs, batch_size=32)
 
