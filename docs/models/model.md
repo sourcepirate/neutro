@@ -32,7 +32,7 @@ Override `Model` directly (write your own `forward` and `backward`). Used for ar
 
 ### File: `neutro/models/base_model.py`
 
-### `Model.__init__` — line 10
+### `Model.__init__`
 
 ```python
 class Model(Layer):
@@ -51,7 +51,7 @@ class Model(Layer):
 - `Model` inherits from `Layer`, enabling nested models.
 - If `inputs` and `outputs` are provided, this is a **Functional API** model and the graph is discovered immediately.
 
-### Graph Discovery (`_init_graph`) — line 25
+### Graph Discovery (`_init_graph`)
 
 ```python
 def traverse(tensor):
@@ -69,9 +69,9 @@ def traverse(tensor):
 
 This is a **post-order DFS** starting from the output tensors. The resulting `_nodes_ordered` is in **forward execution order** (inputs first). The backward pass iterates `reversed(_nodes_ordered)`.
 
-Unique layers are collected from the nodes (line 60): `if node.layer not in self.layers`.
+Unique layers are collected from the nodes: `if node.layer not in self.layers`.
 
-### Forward Pass — line 203
+### Forward Pass
 
 For Functional API models:
 
@@ -97,7 +97,7 @@ for node in self._nodes_ordered:
 - `node.state` is captured **after** `forward` runs, ensuring it stores the state from this specific call (not stale data from a previous call).
 - The captured state uses `_capture_layer_state` which recurses into sublayers.
 
-### Backward Pass — line 297
+### Backward Pass
 
 ```python
 grad_map = {}
@@ -137,7 +137,7 @@ for node in reversed(self._nodes_ordered):
 - **State restoration**: Each node's captured state (from forward) is restored before its backward call, ensuring correct intermediate values (inputs, z, etc.).
 - **Branching support**: If one tensor feeds into multiple downstream layers, `grad_map[t_id] += grad_inputs[i]` sums the gradients (the natural behavior for Add-branching).
 
-### Shared Layer State Management — line 80
+### Shared Layer State Management
 
 ```python
 @staticmethod
@@ -159,7 +159,7 @@ def _capture_layer_state(layer):
 
 This recursively captures the `__dict__` of every sublayer, keyed by `id()`. Excluded keys (`params`, `grads`, `built`, `input_shape`, etc.) are persistent architectural attributes that should not be restored.
 
-### The `fit` Method — line 127
+### The `fit` Method
 
 Supports three input modes:
 1. **Single array**: `fit(x, y)` — standard training.
@@ -170,11 +170,11 @@ Supports three input modes:
 
 Loss is summed across multiple outputs (matching Keras behavior): `batch_loss = sum(self.loss_fn(y_batch[j], output[j])`.
 
-### `evaluate` — line 454
+### `evaluate`
 
 Similarly handles MIMO: sums losses across outputs, falls back gracefully for metrics.
 
-### `summary` — line 462
+### `summary`
 
 For Functional API models, displays a "Connected to" column showing each layer's upstream dependencies:
 
@@ -183,11 +183,11 @@ Layer (type)         Output Shape    Param #   Connected to
 Add (Add)           (None, 32)      0         input1, input2
 ```
 
-### `_get_all_layers` — line 72
+### `_get_all_layers`
 
 Returns all unique layer instances (deduplicated by `id()`) across the entire layer hierarchy, including sublayers. Used by the optimizer to update parameters.
 
-### `Sequential` — line 545
+### `Sequential`
 
 ```python
 class Sequential(Model):

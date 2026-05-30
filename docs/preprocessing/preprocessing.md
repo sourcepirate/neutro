@@ -39,7 +39,7 @@ def text_to_word_sequence(text, filters='!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n', 
     ...
 ```
 
-## Sequence Preprocessing — `neutro/preprocessing/sequence.py$
+## Sequence Preprocessing — `neutro/preprocessing/sequence.py`
 
 ### pad_sequences
 

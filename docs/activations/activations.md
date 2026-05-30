@@ -21,7 +21,7 @@ $$\sigma'(x) = \sigma(x)(1 - \sigma(x))$$
 - Output range: (0, 1). Used for binary classification or as gating mechanism (LSTM, GRU).
 - **Vanishing gradient**: for very large or very small inputs, the gradient approaches 0.
 
-### Tanh — `neutro/activations/tanh.py}$
+### Tanh — `neutro/activations/tanh.py`
 
 $$\tanh(x) = \frac{e^x - e^{-x}}{e^x + e^{-x}}$$
 
@@ -36,7 +36,7 @@ $$\text{Softmax}(x_i) = \frac{e^{x_i}}{\sum_j e^{x_j}}$$
 - Output: probability distribution over classes.
 - **Jacobian-Vector Product** (`gradient_fast`, line 18): computes $y * (\text{grad\_output} - \sum(y * \text{grad\_output}))$ without building the full $N \times N$ Jacobian.
 
-### SiLU — `neutro/activations/silu.py$ (Sigmoid Linear Unit)
+### SiLU — `neutro/activations/silu.py` (Sigmoid Linear Unit)
 
 $$\text{SiLU}(x) = x \cdot \sigma(x)$$
 

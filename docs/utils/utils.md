@@ -21,7 +21,7 @@ def col2im(grad_cols, input_shape, kernel_size, strides):
 
 Used by `Conv2D` and `MaxPooling2D` for efficient forward/backward computation.
 
-## rope_utils — `neutro/utils/rope_utils.py$
+## rope_utils — `neutro/utils/rope_utils.py`
 
 ### Rotary Position Embedding (RoPE)
 

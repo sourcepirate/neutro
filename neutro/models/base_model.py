@@ -124,6 +124,42 @@ class Model(Layer):
             for sl in l.sublayers:
                 stack.append(sl)
 
+    @staticmethod
+    def _clear_layer_grads(layer):
+        stack = [layer]
+        visited = set()
+        while stack:
+            l = stack.pop()
+            l_id = id(l)
+            if l_id in visited:
+                continue
+            visited.add(l_id)
+            l.grads = {}
+            for sl in l.sublayers:
+                stack.append(sl)
+
+    @staticmethod
+    def _accumulate_layer_grads(layer, grads_accumulator):
+        stack = [layer]
+        visited = set()
+        while stack:
+            l = stack.pop()
+            l_id = id(l)
+            if l_id in visited:
+                continue
+            visited.add(l_id)
+
+            layer_acc = grads_accumulator.setdefault(l_id, {})
+            for k, v in l.grads.items():
+                if k in layer_acc:
+                    layer_acc[k] += v
+                else:
+                    layer_acc[k] = np.array(v, copy=True)
+            l.grads = layer_acc
+
+            for sl in l.sublayers:
+                stack.append(sl)
+
     def fit(self, x, y=None, epochs=1, batch_size=32, verbose=1, validation_data=None, callbacks=None):
         is_mimo_x = isinstance(x, list)
         is_mimo_y = isinstance(y, list)
@@ -411,25 +447,12 @@ class Model(Layer):
                     self._restore_layer_state(node.layer, node.state)
                     
                 # Call layer.backward
-                # Temporarily clear layer.grads to capture only gradients for this node
-                original_grads = node.layer.grads
-                node.layer.grads = {}
-                
+                # Temporarily clear layer-tree grads to capture only this node call
+                self._clear_layer_grads(node.layer)
                 grad_inputs = node.layer.backward(node_grad_outputs)
                 
-                # Accumulate parameter gradients
-                l_id = id(node.layer)
-                if l_id not in layer_grads_accumulator:
-                    layer_grads_accumulator[l_id] = {}
-                
-                for k, v in node.layer.grads.items():
-                    if k in layer_grads_accumulator[l_id]:
-                        layer_grads_accumulator[l_id][k] += v
-                    else:
-                        layer_grads_accumulator[l_id][k] = v
-                
-                # Restore the combined gradients to the layer
-                node.layer.grads = layer_grads_accumulator[l_id]
+                # Accumulate parameter gradients across the full layer tree
+                self._accumulate_layer_grads(node.layer, layer_grads_accumulator)
                 
                 # Propagate gradients to inputs
                 if isinstance(node.input_tensors, list):

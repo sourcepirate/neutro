@@ -146,6 +146,7 @@ def test_functional_gradients():
     W[i, j] = orig_val
     
     num_grad = (loss_plus - loss_minus) / (2 * eps)
+    assert np.isclose(dW[i, j], num_grad, rtol=1e-4, atol=1e-5)
     
 def test_complex_summary():
     """Test summary() for a multi-input, multi-output model."""

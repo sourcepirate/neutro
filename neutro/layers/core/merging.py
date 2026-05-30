@@ -176,7 +176,7 @@ class Maximum(Layer):
 
 class Minimum(Layer):
     """
-    Layer that computes the maximum (element-wise) of a list of inputs.
+    Layer that computes the minimum (element-wise) of a list of inputs.
     """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
