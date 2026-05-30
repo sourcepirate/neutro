@@ -47,7 +47,7 @@ def train_mnist():
     train_flow = datagen.flow(x_train[:1000], y_train_cat[:1000], batch_size=64)
     
     # Train for 1 epoch for demo purposes
-    model.fit(train_flow, epochs=1, validation_data=(x_test[:100]/255.0, y_test_cat[:100]))
+    model.fit(train_flow, epochs=10, validation_data=(x_test[:100]/255.0, y_test_cat[:100]))
 
     print("Evaluating...")
     results = model.evaluate(x_test[:100]/255.0, y_test_cat[:100])

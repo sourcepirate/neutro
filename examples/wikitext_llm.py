@@ -67,6 +67,7 @@ def train_wikitext_llm():
     ])
 
     model.compile(optimizer=AdamW(learning_rate=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
+    model.summary()
 
     # Custom training loop or adjust Y for Sequential.fit
     # Sequential.fit currently expects Y to match output shape.
@@ -93,7 +94,7 @@ def train_wikitext_llm():
     # but for LLM we want (batch, seq, vocab).
     
     # Let's check neutro/losses/categorical_crossentropy.py
-    model.fit(x_sub, y_onehot, epochs=1, batch_size=32)
+    model.fit(x_sub, y_onehot, epochs=5, batch_size=32)
 
     print("\nGenerating text...")
     start_text = "The "

@@ -64,7 +64,10 @@ class Layer:
 
     def __call__(self, inputs, *args, **kwargs):
         if not self.built:
-            self.build(inputs.shape)
+            if isinstance(inputs, list):
+                self.build([i.shape for i in inputs])
+            else:
+                self.build(inputs.shape)
         return self.forward(inputs, *args, **kwargs)
 
     def get_params(self):

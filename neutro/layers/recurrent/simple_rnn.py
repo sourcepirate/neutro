@@ -17,6 +17,11 @@ class SimpleRNN(Layer):
         self.params['b'] = get_initializer('zeros')((self.units,))
         super().build(input_shape)
 
+    def compute_output_shape(self, input_shape):
+        if self.return_sequences:
+            return (input_shape[0], input_shape[1], self.units)
+        return (input_shape[0], self.units)
+
     def forward(self, inputs, training=False):
         self.inputs = inputs
         batch, timesteps, _ = inputs.shape

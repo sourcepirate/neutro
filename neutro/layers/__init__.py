@@ -10,6 +10,7 @@ from .pooling.maxpooling2d import MaxPooling2D
 from .pooling.global_pooling import GlobalAveragePooling2D, GlobalMaxPooling2D
 from .recurrent.simple_rnn import SimpleRNN
 from .recurrent.lstm import LSTM
+from .recurrent.gru import GRU
 from .attention.mha import MultiHeadAttention
 from .attention.mqa import MultiQueryAttention
 from .attention.gqa import GroupedQueryAttention

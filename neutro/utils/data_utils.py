@@ -3,6 +3,7 @@ import urllib.request
 import gzip
 import numpy as np
 import ssl
+import json
 
 def download_file(url, filename):
     if not os.path.exists(filename):
@@ -41,3 +42,30 @@ def load_wikitext2():
     with open(path, 'r', encoding='utf-8') as f:
         text = f.read()
     return text
+
+def load_imdb():
+    """Loads the IMDB sentiment classification dataset."""
+    base_url = "https://storage.googleapis.com/tensorflow/tf-keras-datasets/imdb.npz"
+    cache_dir = os.path.expanduser("~/.neutro/datasets")
+    os.makedirs(cache_dir, exist_ok=True)
+    path = os.path.join(cache_dir, "imdb.npz")
+    
+    download_file(base_url, path)
+    
+    with np.load(path, allow_pickle=True) as f:
+        x_train, y_train = f['x_train'], f['y_train']
+        x_test, y_test = f['x_test'], f['y_test']
+        
+    return (x_train, y_train), (x_test, y_test)
+
+def get_imdb_word_index():
+    """Retrieves the dictionary mapping words to their index in the IMDB dataset."""
+    url = "https://storage.googleapis.com/tensorflow/tf-keras-datasets/imdb_word_index.json"
+    cache_dir = os.path.expanduser("~/.neutro/datasets")
+    os.makedirs(cache_dir, exist_ok=True)
+    path = os.path.join(cache_dir, "imdb_word_index.json")
+    
+    download_file(url, path)
+    
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
