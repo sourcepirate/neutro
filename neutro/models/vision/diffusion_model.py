@@ -24,8 +24,12 @@ class DiffusionModel(Model):
             self.predicted_noise = predicted_noise
             return predicted_noise
         else:
-            # Inference mode: just pass through UNet
-            return self.unet(x_start, training=False)
+            if isinstance(x_start, (list, tuple)):
+                unet_inputs = x_start
+            else:
+                t = np.zeros((x_start.shape[0],), dtype=np.int64)
+                unet_inputs = [x_start, t]
+            return self.unet(unet_inputs, training=False)
 
     def backward(self, grad):
         # In diffusion training, grad usually comes from (predicted_noise - actual_noise)

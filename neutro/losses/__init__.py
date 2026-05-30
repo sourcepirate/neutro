@@ -6,6 +6,7 @@ from .vae_loss import VAELoss
 def get(identifier):
     if identifier == 'mse': return MeanSquaredError()
     if identifier == 'categorical_crossentropy': return CategoricalCrossentropy()
-    if identifier == 'vae': return VAELoss # Note: VAELoss needs a model instance, so this might be tricky
+    if identifier == 'vae':
+        raise ValueError("Pass an instantiated VAELoss(model, ...) when compiling a VAE model.")
     if isinstance(identifier, Loss): return identifier
     return identifier

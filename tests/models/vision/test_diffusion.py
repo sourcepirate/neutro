@@ -15,6 +15,14 @@ def test_diffusion_forward():
     sample = model.sample(shape=(1, 16, 16, 1))
     assert sample.shape == (1, 16, 16, 1)
 
+def test_diffusion_inference_forward_without_timestep():
+    unet = UNet(input_channels=1, base_filters=8)
+    model = DiffusionModel(unet, timesteps=10)
+
+    x = np.random.randn(2, 16, 16, 1)
+    out = model.forward(x, training=False)
+    assert out.shape == x.shape
+
 def test_unet_backward():
     unet = UNet(input_channels=1, base_filters=4)
     x = np.random.randn(1, 8, 8, 1)

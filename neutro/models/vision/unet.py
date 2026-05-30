@@ -1,13 +1,9 @@
-import numpy as np
 from ..base_model import Model
 from ...layers.convolutional.conv2d import Conv2D
-from ...layers.normalization.groupnorm import GroupNormalization
-from ...layers.core.activation import Activation
 from ...layers.core.merging import Concatenate
 from ...layers.pooling.upsampling2d import UpSampling2D
 from ...layers.pooling.maxpooling2d import MaxPooling2D
 from ...layers.embedding.time_embedding import TimeEmbedding
-from ...layers.core.dense import Dense
 
 class UNet(Model):
     """

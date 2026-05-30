@@ -9,6 +9,7 @@ class TimeEmbedding(Layer):
     def __init__(self, dim, **kwargs):
         super().__init__(**kwargs)
         self.dim = dim
+        self.last_t = None
 
     def build(self, input_shape):
         super().build(input_shape)
@@ -19,6 +20,7 @@ class TimeEmbedding(Layer):
         """
         if t.ndim == 2:
             t = t.flatten()
+        self.last_t = t
             
         half_dim = self.dim // 2
         embeddings = np.log(10000) / (half_dim - 1)
@@ -34,4 +36,4 @@ class TimeEmbedding(Layer):
     def backward(self, grad_output):
         # Timesteps are usually fixed/non-trainable inputs, 
         # so gradient wrt t is typically not needed or 0.
-        return np.zeros_like(self.input_shape)
+        return np.zeros_like(self.last_t)

@@ -67,5 +67,5 @@ def get_imdb_word_index():
     
     download_file(url, path)
     
-    with open(path, 'r') as f:
+    with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)

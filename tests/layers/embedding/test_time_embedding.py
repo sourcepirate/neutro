@@ -13,3 +13,12 @@ def test_time_embedding():
     out10 = layer.forward(np.array([10]))
     out50 = layer.forward(np.array([50]))
     assert not np.allclose(out10, out50)
+
+def test_time_embedding_backward_shape():
+    layer = TimeEmbedding(dim=64)
+    t = np.array([1, 2, 3])
+    _ = layer.forward(t)
+    grad = layer.backward(np.ones((3, 64)))
+
+    assert grad.shape == t.shape
+    assert np.all(grad == 0)

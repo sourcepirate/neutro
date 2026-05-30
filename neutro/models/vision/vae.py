@@ -4,7 +4,6 @@ from ...layers.core.dense import Dense
 from ...layers.core.reparameterization import Reparameterization
 from ...layers.core.flatten import Flatten
 from ...layers.convolutional.conv2d import Conv2D
-from ...layers.pooling.upsampling2d import UpSampling2D
 from ...losses.vae_loss import VAELoss
 
 class VAE(Model):
@@ -24,7 +23,6 @@ class VAE(Model):
         
         # Decoder
         self.decoder_fc = Dense(np.prod(input_shape), activation='sigmoid') # Use sigmoid for BCE
-        self.decoder_upsample = UpSampling2D(size=(2, 2))
         
         self.layers = [
             self.encoder_conv, self.flatten, self.fc_mean, self.fc_log_var, self.sampling,
