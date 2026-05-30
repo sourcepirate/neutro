@@ -11,6 +11,7 @@ from neutro.utils.data_utils import load_wikitext2
 from neutro.optimizers import AdamW
 from neutro.layers.attention.base_attention import BaseAttention
 from neutro.data import DataLoader
+from neutro.tokenizers import RegexTokenizer, get_gpt2_tokenizer
 
 class CharTokenizer:
     def __init__(self, text):
@@ -37,10 +38,22 @@ def prepare_data(text, tokenizer, seq_len=64, step=3):
     
     return np.array(x), np.array(y)
 
-def train_wikitext_llm():
+def train_wikitext_llm(tokenizer_type="bpe", vocab_size=2048, epochs=1):
     print("Loading WikiText-2...")
     text = load_wikitext2()
-    tokenizer = CharTokenizer(text)
+    
+    if tokenizer_type == "gpt2":
+        print("Loading GPT-2 Tokenizer...")
+        tokenizer = get_gpt2_tokenizer()
+    elif tokenizer_type == "bpe":
+        print(f"Training custom BPE Tokenizer (vocab_size={vocab_size})...")
+        tokenizer = RegexTokenizer()
+        # Train on a portion of the text for speed
+        tokenizer.train(text[:100000], vocab_size=vocab_size, verbose=True)
+        print("BPE Training complete.")
+    else:
+        tokenizer = CharTokenizer(text)
+    
     vocab_size = tokenizer.vocab_size
     seq_len = 32
     
@@ -48,14 +61,6 @@ def train_wikitext_llm():
     
     print("Preparing data...")
     x, y = prepare_data(text, tokenizer, seq_len=seq_len)
-    
-    # One-hot encode targets for categorical_crossentropy
-    # To save memory in demo, we could use a custom loss or smaller subset
-    # But let's follow the API. (batch, seq, vocab)
-    
-    # Note: Our current categorical_crossentropy expects (batch, classes)
-    # For sequence tasks, we might need to flatten or update the loss.
-    # Let's check the loss implementation.
     
     print("Building Transformer LLM...")
     model = Sequential([
@@ -66,35 +71,15 @@ def train_wikitext_llm():
         Softmax()
     ])
 
-    model.compile(optimizer=AdamW(learning_rate=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer=AdamW(learning_rate=0.001), loss='sparse_categorical_crossentropy', metrics=['sparse_accuracy'])
     model.summary()
 
-    # Custom training loop or adjust Y for Sequential.fit
-    # Sequential.fit currently expects Y to match output shape.
-    # Output is (batch, seq_len, vocab_size)
-    
-    # Let's adjust the fit method or targets. 
-    # Current CategoricalCrossentropy probably handles (batch, seq, vocab) if flattened.
-    
     print("Starting training (Subset)...")
     # Small subset for demo
     x_sub = x[:1000]
     y_sub = y[:1000]
     
-    # One-hot encode Y: (1000, seq_len, vocab_size)
-    y_onehot = np.zeros((len(y_sub), seq_len, vocab_size))
-    for i in range(len(y_sub)):
-        for j in range(seq_len):
-            y_onehot[i, j, y_sub[i, j]] = 1.0
-
-    # We need to flatten targets and predictions for standard categorical_crossentropy
-    # Or update the loss to handle sequences.
-    # Actually, Sequential.fit and CategoricalCrossentropy in this lib
-    # might need a Flatten layer before Dense if we want (batch, vocab)
-    # but for LLM we want (batch, seq, vocab).
-    
-    # Let's check neutro/losses/categorical_crossentropy.py
-    model.fit(x_sub, y_onehot, epochs=5, batch_size=32)
+    model.fit(x_sub, y_sub, epochs=epochs, batch_size=32)
 
     print("\nGenerating text...")
     start_text = "The "
@@ -109,10 +94,17 @@ def train_wikitext_llm():
         
         preds = model.predict(curr_x.reshape(1, -1)) # (1, seq, vocab)
         next_idx = np.argmax(preds[0, -1, :])
-        generated += tokenizer.idx_to_char[next_idx]
         indices = np.append(indices, next_idx)
     
+    generated = tokenizer.decode(indices)
     print(f"Generated text: {generated}")
 
 if __name__ == "__main__":
-    train_wikitext_llm()
+    import argparse
+    parser = argparse.ArgumentParser(description="Train a Transformer LLM on WikiText-2")
+    parser.add_argument("--tokenizer", type=str, default="bpe", choices=["char", "bpe", "gpt2"], help="Tokenizer type")
+    parser.add_argument("--vocab_size", type=int, default=2048, help="Vocab size for BPE tokenizer")
+    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs")
+    args = parser.parse_args()
+    
+    train_wikitext_llm(tokenizer_type=args.tokenizer, vocab_size=args.vocab_size, epochs=args.epochs)
