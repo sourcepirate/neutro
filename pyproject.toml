@@ -12,6 +12,7 @@ dependencies = [
     "numpy",
     "scipy",
     "joblib",
+    "tqdm"
 ]
 
 [project.optional-dependencies]

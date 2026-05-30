@@ -1,5 +1,6 @@
 import numpy as np
 import joblib
+from tqdm import tqdm
 from .. import metrics as metrics_module
 from .. import losses as losses_module
 from ..callbacks import History
@@ -64,6 +65,9 @@ class Model:
                 num_batches = int(np.ceil(n_samples / batch_size))
             
             total_seen = 0
+            if verbose == 1:
+                pbar = tqdm(total=num_batches, desc=f"Epoch {epoch+1}/{epochs}")
+            
             for i in range(num_batches):
                 if use_generator:
                     x_batch, y_batch = next(data_iter)
@@ -96,7 +100,18 @@ class Model:
                 self.optimizer.step(all_trainable_layers)
                 
                 for cb in all_callbacks: cb.on_batch_end(i, logs)
+
+                if verbose == 1:
+                    postfix = {'loss': f"{epoch_loss / total_seen:.4f}"}
+                    for m in self.metrics:
+                        name = m.get_name()
+                        postfix[name] = f"{epoch_metrics[name] / total_seen:.4f}"
+                    pbar.set_postfix(postfix)
+                    pbar.update(1)
             
+            if verbose == 1:
+                pbar.close()
+
             logs = {
                 'loss': epoch_loss / total_seen,
                 **{k: v / total_seen for k, v in epoch_metrics.items()}
@@ -112,16 +127,27 @@ class Model:
             for cb in all_callbacks: cb.on_epoch_end(epoch, logs)
             
             if verbose:
-                msg = f"Epoch {epoch+1}/{epochs} - loss: {logs['loss']:.4f}"
-                for m in self.metrics:
-                    name = m.get_name()
-                    msg += f" - {name}: {logs[name]:.4f}"
-                if validation_data:
-                    msg += f" - val_loss: {logs['val_loss']:.4f}"
+                if verbose == 1:
+                    # For verbose 1, we already have the progress bar, 
+                    # we just need to print validation results if they exist
+                    if validation_data:
+                        val_msg = f" - val_loss: {logs['val_loss']:.4f}"
+                        for m in self.metrics:
+                            name = m.get_name()
+                            val_msg += f" - val_{name}: {logs[f'val_{name}']:.4f}"
+                        print(val_msg)
+                else:
+                    # Verbose 2 or other: print the full summary line
+                    msg = f"Epoch {epoch+1}/{epochs} - loss: {logs['loss']:.4f}"
                     for m in self.metrics:
                         name = m.get_name()
-                        msg += f" - val_{name}: {logs[f'val_{name}']:.4f}"
-                print(msg)
+                        msg += f" - {name}: {logs[name]:.4f}"
+                    if validation_data:
+                        msg += f" - val_loss: {logs['val_loss']:.4f}"
+                        for m in self.metrics:
+                            name = m.get_name()
+                            msg += f" - val_{name}: {logs[f'val_{name}']:.4f}"
+                    print(msg)
         
         for cb in all_callbacks: cb.on_train_end(logs)
         return history
@@ -178,6 +204,9 @@ class Model:
         for layer in reversed(self.layers):
             grad = layer.backward(grad)
         return grad
+
+    def __call__(self, inputs, *args, **kwargs):
+        return self.forward(inputs, *args, **kwargs)
 
     def predict(self, x):
         return self.forward(x, training=False)
