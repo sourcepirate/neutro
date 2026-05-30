@@ -1,4 +1,5 @@
 from . import layers
+from .layers import Input
 from . import activations
 from . import initializers
 from . import losses

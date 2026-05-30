@@ -42,6 +42,10 @@ class UNet(Model):
             self.final_conv
         ]
 
+    def build(self, input_shape):
+        self.input_shape = input_shape
+        self.built = True
+
     def forward(self, inputs, training=False):
         """
         inputs: [x, t] where x is image and t is timestep

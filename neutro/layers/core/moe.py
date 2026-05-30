@@ -36,6 +36,9 @@ class MoELayer(Layer):
         
         super().build(input_shape)
 
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
     def forward(self, x, training=False):
         # x: (batch, seq_len, dim) or (batch, dim)
         self.x_shape = x.shape

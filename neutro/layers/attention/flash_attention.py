@@ -15,8 +15,8 @@ class FlashAttention(Layer):
         dropout: Dropout probability.
         use_rope: Whether to use Rotary Positional Embeddings.
     """
-    def __init__(self, num_heads, key_dim, block_size_r=64, block_size_c=64, dropout=0.0, use_rope=False):
-        super().__init__()
+    def __init__(self, num_heads, key_dim, block_size_r=64, block_size_c=64, dropout=0.0, use_rope=False, **kwargs):
+        super().__init__(**kwargs)
         self.num_heads = num_heads
         self.key_dim = key_dim
         self.head_dim = key_dim // num_heads
@@ -34,6 +34,9 @@ class FlashAttention(Layer):
         self.params['Wv'] = np.random.randn(self.embed_dim, self.key_dim) * 0.02
         self.params['Wo'] = np.random.randn(self.key_dim, self.embed_dim) * 0.02
         super().build(input_shape)
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
 
     def forward(self, x, mask=None, training=False, kv_cache=None, layer_id=None):
         self.x = x

@@ -9,6 +9,11 @@ class Reparameterization(Layer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+    def compute_output_shape(self, input_shape):
+        if isinstance(input_shape, list):
+            return input_shape[0]
+        return input_shape
+
     def forward(self, inputs, training=False):
         """
         inputs: list of [z_mean, z_log_var]

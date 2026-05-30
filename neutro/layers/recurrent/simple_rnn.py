@@ -3,8 +3,8 @@ from ..base import Layer
 from ...initializers import get as get_initializer
 
 class SimpleRNN(Layer):
-    def __init__(self, units, activation='tanh', return_sequences=False):
-        super().__init__()
+    def __init__(self, units, activation='tanh', return_sequences=False, **kwargs):
+        super().__init__(**kwargs)
         self.units = units
         self.return_sequences = return_sequences
         self.activation_name = activation

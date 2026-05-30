@@ -2,8 +2,8 @@ import numpy as np
 from ..base import Layer
 
 class LayerNormalization(Layer):
-    def __init__(self, epsilon=1e-6):
-        super().__init__()
+    def __init__(self, epsilon=1e-6, **kwargs):
+        super().__init__(**kwargs)
         self.epsilon = epsilon
 
     def build(self, input_shape):
