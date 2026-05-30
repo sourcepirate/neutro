@@ -21,13 +21,27 @@ class ImageDataGenerator:
                  height_shift_range=0.0, 
                  horizontal_flip=False, 
                  vertical_flip=False,
-                 rescale=None):
+                 rescale=None,
+                 data_format='channels_last'):
         self.rotation_range = rotation_range
         self.width_shift_range = width_shift_range
         self.height_shift_range = height_shift_range
         self.horizontal_flip = horizontal_flip
         self.vertical_flip = vertical_flip
         self.rescale = rescale
+        if data_format not in ('channels_last', 'channels_first'):
+            raise ValueError("data_format must be 'channels_last' or 'channels_first'")
+        self.data_format = data_format
+
+    def _to_channels_last(self, x):
+        if self.data_format == 'channels_first':
+            return np.transpose(x, (1, 2, 0))
+        return x
+
+    def _from_channels_last(self, x):
+        if self.data_format == 'channels_first':
+            return np.transpose(x, (2, 0, 1))
+        return x
 
     def flow(self, x, y=None, batch_size=32, shuffle=True):
         """
@@ -40,7 +54,7 @@ class ImageDataGenerator:
         Applies a transformation to an image.
         x: (H, W, C)
         """
-        img = x.copy().astype(np.float32)
+        img = self._to_channels_last(x.copy().astype(np.float32))
         
         if self.rescale:
             img *= self.rescale
@@ -62,4 +76,4 @@ class ImageDataGenerator:
             ty = np.random.uniform(-self.height_shift_range, self.height_shift_range) * h
             img = shift(img, [ty, tx, 0], mode='nearest')
 
-        return img
+        return self._from_channels_last(img)

@@ -24,3 +24,10 @@ def test_alexnet_smoke():
     y = model.predict(x)
     assert y.shape == (1, 10)
     assert np.allclose(np.sum(y), 1.0)
+
+def test_vgg16_channels_first_smoke():
+    model = VGG16(input_shape=(3, 32, 32), num_classes=10, data_format='channels_first')
+    x = np.random.randn(1, 3, 32, 32)
+    y = model.predict(x)
+    assert y.shape == (1, 10)
+    assert np.allclose(np.sum(y), 1.0)

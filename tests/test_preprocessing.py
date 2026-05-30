@@ -46,3 +46,15 @@ def test_image_data_generator_rotation():
     assert transformed[16, 16, 0] > 0.5
     # Top-center should move
     assert transformed[0, 16, 0] < 0.5
+
+def test_image_data_generator_channels_first():
+    x = np.random.randn(4, 3, 8, 8)
+    y = np.random.randint(0, 10, (4,))
+
+    datagen = ImageDataGenerator(rescale=1/255.0, data_format='channels_first', horizontal_flip=False)
+    it = datagen.flow(x, y, batch_size=2, shuffle=False)
+
+    batch_x, batch_y = next(iter(it))
+    assert batch_x.shape == (2, 3, 8, 8)
+    assert batch_y.shape == (2,)
+    np.testing.assert_allclose(batch_x, x[:2] / 255.0, atol=1e-5)

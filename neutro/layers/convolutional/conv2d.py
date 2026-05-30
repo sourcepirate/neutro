@@ -17,7 +17,7 @@ class Conv2D(Layer):
         kernel_initializer: Initializer for the kernel weights matrix.
         bias_initializer: Initializer for the bias vector.
     """
-    def __init__(self, filters, kernel_size, strides=(1, 1), padding='valid', activation=None, kernel_initializer='glorot_uniform', bias_initializer='zeros', **kwargs):
+    def __init__(self, filters, kernel_size, strides=(1, 1), padding='valid', activation=None, kernel_initializer='glorot_uniform', bias_initializer='zeros', data_format='channels_last', **kwargs):
         super().__init__(**kwargs)
         self.filters = filters
         self.kernel_size = kernel_size if isinstance(kernel_size, (tuple, list)) else (kernel_size, kernel_size)
@@ -26,18 +26,35 @@ class Conv2D(Layer):
         self.activation = get_activation(activation)
         self.kernel_initializer = get_initializer(kernel_initializer)
         self.bias_initializer = get_initializer(bias_initializer)
+        if data_format not in ('channels_last', 'channels_first'):
+            raise ValueError("data_format must be 'channels_last' or 'channels_first'")
+        self.data_format = data_format
+
+    def _shape_to_channels_last(self, shape):
+        if self.data_format == 'channels_first':
+            batch, c, h, w = shape
+            return batch, h, w, c
+        return shape
+
+    def _to_channels_last(self, inputs):
+        if self.data_format == 'channels_first':
+            return inputs.transpose(0, 2, 3, 1)
+        return inputs
+
+    def _from_channels_last(self, inputs):
+        if self.data_format == 'channels_first':
+            return inputs.transpose(0, 3, 1, 2)
+        return inputs
 
     def build(self, input_shape):
-        # input_shape: (batch, height, width, channels)
-        _, h, w, c = input_shape
+        _, h, w, c = self._shape_to_channels_last(input_shape)
         kh, kw = self.kernel_size
-        # W shape: (kh, kw, c, f) -> for im2col we'll want (f, c, kh, kw)
         self.params['W'] = self.kernel_initializer((kh, kw, c, self.filters))
         self.params['b'] = self.bias_initializer((self.filters,))
         super().build(input_shape)
 
     def compute_output_shape(self, input_shape):
-        batch, h, w, c = input_shape
+        batch, h, w, _ = self._shape_to_channels_last(input_shape)
         kh, kw = self.kernel_size
         sh, sw = self.strides
         padding = 0
@@ -45,17 +62,18 @@ class Conv2D(Layer):
             padding = (kh - 1) // 2
         oh = (h + 2*padding - kh) // sh + 1
         ow = (w + 2*padding - kw) // sw + 1
+        if self.data_format == 'channels_first':
+            return (batch, self.filters, oh, ow)
         return (batch, oh, ow, self.filters)
 
     def forward(self, inputs, training=False):
         self.inputs = inputs
-        batch, h, w, c = inputs.shape
+        inputs_nhwc = self._to_channels_last(inputs)
+        batch, h, w, c = inputs_nhwc.shape
         kh, kw, _, f = self.params['W'].shape
         sh, sw = self.strides
 
-        # Internally use (N, C, H, W)
-        x = inputs.transpose(0, 3, 1, 2)
-        # Weights (kh, kw, c, f) -> (f, c, kh, kw)
+        x = inputs_nhwc.transpose(0, 3, 1, 2)
         W = self.params['W'].transpose(3, 2, 0, 1)
         b = self.params['b'].reshape(-1, 1)
 
@@ -71,34 +89,30 @@ class Conv2D(Layer):
         
         out = res.reshape(f, oh, ow, batch).transpose(3, 1, 2, 0)
         self.z = out
-        
+
         if self.activation:
-            return self.activation(out)
-        return out
+            out = self.activation(out)
+        return self._from_channels_last(out)
 
     def backward(self, grad_output):
+        grad_output_nhwc = self._to_channels_last(grad_output)
         if self.activation:
             if hasattr(self.activation, 'gradient_fast'):
-                grad_output = self.activation.gradient_fast(self.z, grad_output)
+                grad_output_nhwc = self.activation.gradient_fast(self.z, grad_output_nhwc)
             else:
-                grad_output = grad_output * self.activation.gradient(self.z)
+                grad_output_nhwc = grad_output_nhwc * self.activation.gradient(self.z)
                 
-        # grad_output shape: (batch, oh, ow, f)
-        batch, oh, ow, f = grad_output.shape
+        batch, oh, ow, f = grad_output_nhwc.shape
         kh, kw, c, _ = self.params['W'].shape
         sh, sw = self.strides
         
-        # Transpose grad_output for easier computation
-        dout = grad_output.transpose(3, 1, 2, 0).reshape(f, -1)
+        dout = grad_output_nhwc.transpose(3, 1, 2, 0).reshape(f, -1)
         
-        # db
-        self.grads['b'] = np.sum(grad_output, axis=(0, 1, 2))
+        self.grads['b'] = np.sum(grad_output_nhwc, axis=(0, 1, 2))
         
-        # dW
         dW = dout @ self.x_cols.T
         self.grads['W'] = dW.reshape(f, c, kh, kw).transpose(2, 3, 1, 0)
         
-        # dX
         W = self.params['W'].transpose(3, 2, 0, 1)
         dx_cols = W.reshape(f, -1).T @ dout
         
@@ -106,5 +120,6 @@ class Conv2D(Layer):
         if self.padding == 'same':
             padding = (kh - 1) // 2
             
-        dx = col2im_indices(dx_cols, (batch, c, self.input_shape[1], self.input_shape[2]), kh, kw, padding=padding, stride=sh)
-        return dx.transpose(0, 2, 3, 1)
+        _, h, w, _ = self._shape_to_channels_last(self.input_shape)
+        dx = col2im_indices(dx_cols, (batch, c, h, w), kh, kw, padding=padding, stride=sh)
+        return self._from_channels_last(dx.transpose(0, 2, 3, 1))
