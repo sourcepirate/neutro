@@ -1,9 +1,11 @@
 from .base import Layer
+from .core.input_layer import Input, InputLayer
 from .core.dense import Dense
 from .core.dropout import Dropout
 from .core.flatten import Flatten
 from .core.activation import Activation, ReLU, Softmax, Sigmoid, Tanh
 from .core.moe import MoELayer
+from .core.merging import Add, Concatenate, Multiply, Average, Maximum, Minimum
 from .convolutional.conv2d import Conv2D
 from .convolutional.conv1d import Conv1D
 from .pooling.maxpooling2d import MaxPooling2D

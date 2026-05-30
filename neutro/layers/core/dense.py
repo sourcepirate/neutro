@@ -13,6 +13,7 @@ class Dense(Layer):
         self.bias_initializer = get_initializer(bias_initializer)
 
     def build(self, input_shape):
+        # print(f"DEBUG: Dense.build input_shape={input_shape}")
         self.input_dim = input_shape[-1]
         self.params['W'] = self.kernel_initializer((self.input_dim, self.units))
         if self.use_bias:

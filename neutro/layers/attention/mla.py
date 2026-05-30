@@ -45,6 +45,9 @@ class MultiHeadLatentAttention(Layer):
         
         super().build(input_shape)
 
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
     def forward(self, x, mask=None, training=False, kv_cache=None, layer_id=None):
         self.x = x
         batch_size, seq_len, _ = x.shape

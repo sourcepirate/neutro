@@ -33,6 +33,18 @@ You are an agent working on `neutro`, an "intentionally naive" and educational i
 - `RegexTokenizer` is preferred for LLM tasks, implementing byte-level BPE with regex splitting.
 - Maintain educational clarity: explicitly implement the greedy merge process without obscure optimizations.
 
+## Documentation Sync
+
+Whenever you modify a source file under `neutro/layers/`, `neutro/models/`, or `neutro/engine/`, you MUST update its corresponding documentation file under `docs/`. The doc path mirrors the source path (e.g., `neutro/layers/core/dense.py` ↔ `docs/layers/core/dense.md`).
+
+Required for every doc change:
+- Follow the **line-by-line walkthrough** style: explain `__init__`, `build`, `forward`, `backward` in sequence.
+- Add 🔍 **"Why" annotations** on every stored/cached value — explain what it's used for in backward.
+- Add 📐 **Shape walkthroughs** on every matrix operation — show `(B, D) @ (D, U) → (B, U)`.
+- Reference exact file paths and line numbers in the source.
+- If creating a new layer, create a new `.md` file in the corresponding `docs/` subdirectory.
+- Run `pytest` after doc changes to verify no regressions.
+
 ## Testing
 - Aim for >90% test coverage.
 - Use `pytest`.

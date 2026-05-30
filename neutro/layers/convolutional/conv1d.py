@@ -17,8 +17,8 @@ class Conv1D(Layer):
         kernel_initializer: Initializer for the kernel weights matrix.
         bias_initializer: Initializer for the bias vector.
     """
-    def __init__(self, filters, kernel_size, strides=1, padding='valid', activation=None, kernel_initializer='glorot_uniform', bias_initializer='zeros'):
-        super().__init__()
+    def __init__(self, filters, kernel_size, strides=1, padding='valid', activation=None, kernel_initializer='glorot_uniform', bias_initializer='zeros', **kwargs):
+        super().__init__(**kwargs)
         self.filters = filters
         self.kernel_size = kernel_size if isinstance(kernel_size, (tuple, list)) else (kernel_size,)
         self.strides = strides if isinstance(strides, (tuple, list)) else (strides,)

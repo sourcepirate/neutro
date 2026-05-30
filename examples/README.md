@@ -15,7 +15,20 @@ A classic convolutional neural network for classifying handwritten digits from t
 python3 examples/mnist_cnn.py
 ```
 
-## 2. WikiText-2 Transformer LLM
+## 2. MNIST Functional Residual Model
+Demonstrates the **Functional API** for building non-linear architectures like ResNets.
+
+**Features:**
+- Keras-style Functional API (`Input`, `Model(inputs, outputs)`).
+- Skip connections (residual paths) using the `Add` layer.
+- Automatic backpropagation through complex Directed Acyclic Graphs (DAG).
+
+**Run:**
+```bash
+python3 examples/mnist_functional_residual.py
+```
+
+## 3. WikiText-2 Transformer LLM
 A character-level language model based on the Transformer architecture, trained on the WikiText-2 dataset.
 
 **Features:**

@@ -14,6 +14,9 @@ class TimeEmbedding(Layer):
     def build(self, input_shape):
         super().build(input_shape)
 
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], self.dim)
+
     def forward(self, t, training=False):
         """
         t: array of shape (batch_size,) or (batch_size, 1)

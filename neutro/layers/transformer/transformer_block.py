@@ -36,6 +36,9 @@ class TransformerBlock(Layer):
         self.dropout2.build(input_shape)
         super().build(input_shape)
 
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
     def forward(self, inputs, training=False, kv_cache=None, layer_id=None):
         self.inputs = inputs
         mask = None
