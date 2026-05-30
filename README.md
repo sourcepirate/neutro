@@ -33,6 +33,7 @@ Let's be honest: modern DL frameworks are black boxes. You pip install 4GB of bi
 | Category | The "Fancy" Stuff | Why You Should Care |
 | :--- | :--- | :--- |
 | **Attention** | `FlashAttention`, `MQA`, `GQA`, `RoPE` | We have more attention variants than a distracted toddler. |
+| **Tokenization** | `BPETokenizer`, `RegexTokenizer` | Byte-level BPE with regex splitting, just like the big kids. |
 | **Vision** | `AlexNet`, `VGG16`, `VGG19`, `im2col` | Classical and modern vision architectures, vectorized. |
 | **LLMs** | `Llama`, `Qwen`, `DeepSeek` (MoE) | Yes, you can run a (very tiny) MoE model on your CPU. |
 | **Modern Ops** | `RMSNorm`, `SiLU`, `SwiGLU` | The secret sauce of modern LLMs, hand-implemented. |

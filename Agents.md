@@ -28,6 +28,11 @@ You are an agent working on `neutro`, an "intentionally naive" and educational i
 - `KVCache` is used for efficient generation.
 - `MLA` (Multi-Head Latent Attention) should be used for DeepSeek-style models.
 
+### Tokenizers
+- All tokenizers should support `encode(text)` and `decode(tokens)`.
+- `RegexTokenizer` is preferred for LLM tasks, implementing byte-level BPE with regex splitting.
+- Maintain educational clarity: explicitly implement the greedy merge process without obscure optimizations.
+
 ## Testing
 - Aim for >90% test coverage.
 - Use `pytest`.
