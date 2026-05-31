@@ -53,3 +53,21 @@ def test_global_pooling_channels_first():
     assert max_out.shape == (2, 3)
     assert max_out[0, 0] == np.max(inputs[0, 0, :, :])
     assert max_layer.backward(np.random.randn(2, 3)).shape == inputs.shape
+
+def test_global_avg_pooling_invalid_data_format():
+    with pytest.raises(ValueError, match="data_format must be"):
+        GlobalAveragePooling2D(data_format='invalid')
+
+def test_global_max_pooling_invalid_data_format():
+    with pytest.raises(ValueError, match="data_format must be"):
+        GlobalMaxPooling2D(data_format='invalid')
+
+def test_global_avg_pooling_compute_output_shape():
+    layer = GlobalAveragePooling2D(data_format='channels_last')
+    shape = layer.compute_output_shape((2, 8, 8, 3))
+    assert shape == (2, 3)
+
+def test_global_max_pooling_compute_output_shape():
+    layer = GlobalMaxPooling2D(data_format='channels_last')
+    shape = layer.compute_output_shape((2, 8, 8, 3))
+    assert shape == (2, 3)
