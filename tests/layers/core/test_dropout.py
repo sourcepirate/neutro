@@ -71,6 +71,7 @@ def test_dropout_backward_inference():
     x = np.random.rand(10, 10)
     grad = np.random.rand(10, 10)
 
+    layer.forward(x, training=True)
     layer.forward(x, training=False)
     dx = layer.backward(grad)
     assert np.all(dx == grad)

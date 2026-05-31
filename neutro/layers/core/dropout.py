@@ -9,6 +9,7 @@ class Dropout(Layer):
 
     def forward(self, inputs, training=False):
         if not training or self.rate == 0:
+            self.mask = None
             return inputs
         self.mask = np.random.binomial(1, 1 - self.rate, size=inputs.shape) / (1 - self.rate)
         return inputs * self.mask

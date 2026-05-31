@@ -60,6 +60,15 @@ def backward(self, grad_output):
 
 🔍 **Line `if self.mask is None`**: If we never called forward (or called it with `training=False`), there's no mask. In that case, the gradient passes through unchanged — just like the forward pass.
 
+#### `compute_output_shape`
+
+```python
+def compute_output_shape(self, input_shape):
+    return input_shape
+```
+
+Dropout does not change tensor rank or dimensions; it only masks values during training. So the output shape is always identical to the input shape.
+
 ---
 
 ## Flatten — `neutro/layers/core/flatten.py`
