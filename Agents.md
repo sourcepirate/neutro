@@ -8,7 +8,8 @@ You are an agent working on `neutro`, an "intentionally naive" and educational i
 2.  **Keras API Fidelity**: Maintain strict compatibility with Keras/TensorFlow APIs (`compile`, `fit`, `predict`, `evaluate`, `summary`, `Sequential`, `Model`).
 3.  **Educational Clarity**: Code should be readable and reflect the underlying mathematical algorithms (e.g., FlashAttention, MoE routing, RoPE). Use clear variable names and minimal but impactful comments.
 4.  **No Magic**: Avoid complex meta-programming or obscure libraries. If a layer needs a backward pass, implement it explicitly.
-5.  **Nested Training**: Ensure that nested layers (layers within blocks) are discovered and updated by the optimizer. Use `Layer.sublayers` to traverse the hierarchy.
+5.  **No Autograd**: `neutro` has no automatic differentiation engine. There is no equivalent of PyTorch's `autograd` or JAX's `grad`. Every layer MUST implement its own `backward(grad_output)` that manually computes gradients using the chain rule. This is the defining educational feature of the library — you *are* the autograd engine.
+6.  **Nested Training**: Ensure that nested layers (layers within blocks) are discovered and updated by the optimizer. Use `Layer.sublayers` to traverse the hierarchy.
 
 ## Implementation Details
 

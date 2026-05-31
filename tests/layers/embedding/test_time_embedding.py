@@ -22,3 +22,25 @@ def test_time_embedding_backward_shape():
 
     assert grad.shape == t.shape
     assert np.all(grad == 0)
+
+def test_time_embedding_build():
+    layer = TimeEmbedding(dim=128)
+    layer.build((4,))
+    assert layer.built
+
+def test_time_embedding_compute_output_shape():
+    layer = TimeEmbedding(dim=256)
+    shape = layer.compute_output_shape((4,))
+    assert shape == (4, 256)
+
+def test_time_embedding_2d_input():
+    layer = TimeEmbedding(dim=64)
+    t = np.array([[0], [10], [50], [100]])
+    out = layer.forward(t)
+    assert out.shape == (4, 64)
+
+def test_time_embedding_odd_dim():
+    layer = TimeEmbedding(dim=129)
+    t = np.array([0, 10, 50])
+    out = layer.forward(t)
+    assert out.shape == (3, 129)

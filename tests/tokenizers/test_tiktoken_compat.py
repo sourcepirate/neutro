@@ -51,3 +51,46 @@ def test_tiktoken_compatible_tokenizer():
     encoded_special = tokenizer.encode(text_with_special, allowed_special="all")
     assert 1000 in encoded_special
     assert tokenizer.decode(encoded_special) == text_with_special
+
+
+from unittest.mock import patch, MagicMock
+
+
+@patch('urllib.request.urlopen')
+@patch('os.path.exists')
+@patch('os.makedirs')
+@patch('tempfile.gettempdir')
+@patch('builtins.open', new_callable=MagicMock)
+def test_load_tiktoken_bpe_url(mock_file_open, mock_gettempdir, mock_makedirs, mock_exists, mock_urlopen):
+    import base64
+    
+    mock_gettempdir.return_value = "/tmp"
+    mock_exists.return_value = False
+    
+    content = base64.b64encode(b"hello") + b" 258\n" + base64.b64encode(b"world") + b" 259\n"
+    
+    mock_response = MagicMock()
+    mock_response.read.return_value = content
+    mock_response.__enter__.return_value = mock_response
+    mock_urlopen.return_value = mock_response
+    
+    mock_file = MagicMock()
+    mock_file.__enter__.return_value.read.return_value = content
+    mock_file_open.return_value = mock_file
+    
+    from neutro.tokenizers.tiktoken_compat import load_tiktoken_bpe
+    ranks = load_tiktoken_bpe("https://example.com/test.tiktoken")
+    assert len(ranks) == 2
+    assert ranks[b"hello"] == 258
+    assert ranks[b"world"] == 259
+
+
+@patch('neutro.tokenizers.tiktoken_compat.load_tiktoken_bpe')
+def test_get_gpt2_tokenizer(mock_load_bpe):
+    mock_load_bpe.return_value = {}
+    
+    from neutro.tokenizers.tiktoken_compat import get_gpt2_tokenizer
+    tokenizer = get_gpt2_tokenizer()
+    assert tokenizer is not None
+    assert tokenizer.special_tokens["<|endoftext|>"] == 50256
+    mock_load_bpe.assert_called_once()

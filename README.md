@@ -17,6 +17,12 @@ Let's be honest: modern DL frameworks are black boxes. You pip install 4GB of bi
 - **A Toy, not a Tool**: This isn't meant for production. It's a playground for learning advanced algorithms (MHA, GQA, FlashAttention, LSTM) in their purest form.
 - **For the Wisdom-Rich**: If you remember when 64MB of RAM was a flex and "vectorization" meant loop unrolling, this is for you. It's a fun way to play with cutting-edge 2024 algorithms using 1990s-era clarity.
 
+## 🚫 No Autograd
+
+Unlike PyTorch or TensorFlow, `neutro` has **zero automatic differentiation**. You will not find an `autograd` engine here. Every gradient is computed by hand — each layer implements its own `backward` method using explicit matrix multiplications and the chain rule.
+
+This is not a bug, it's the feature. Writing `self.grads['W'] = inputs.T @ grad_output` is how you *learn* what backpropagation actually does.
+
 ---
 
 ## 🚀 What's Inside?

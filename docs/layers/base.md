@@ -247,6 +247,42 @@ y = layer(x)
 8. `Dense.forward` computes `np.dot(x, W) + b`, applies ReLU, caches `self.inputs` and `self.z`, returns the output.
 9. Later, `layer.backward(grad_output)` uses those cached values to compute weight gradients.
 
+## 🚫 No Autograd — You Write the Gradients
+
+This is the single most important thing to understand about `neutro`:
+
+**There is no automatic differentiation engine.**
+
+In PyTorch, you write:
+
+```python
+y = x @ W + b      # PyTorch traces this into a graph
+y.backward()       # PyTorch automatically computes gradients for W and b
+```
+
+In `neutro`, you write both `forward` AND `backward`:
+
+```python
+def forward(self, x):
+    self.inputs = x
+    return x @ self.params['W'] + self.params['b']
+
+def backward(self, grad_output):
+    self.grads['W'] = self.inputs.T @ grad_output
+    self.grads['b'] = np.sum(grad_output, axis=0)
+    return grad_output @ self.params['W'].T
+```
+
+Why? Because every matrix multiplication you write in `backward` — every `@`, every `np.sum`, every `reshape` — is an explicit application of the **chain rule**. You are not calling `loss.backward()`. You *are* the autograd engine.
+
+This means:
+- **If you add a new layer**, you must implement `backward` yourself — no framework will do it for you.
+- **If you change the forward pass**, you must update backward to match. Every new line in `forward` probably needs a corresponding line in `backward`.
+- **If backward gives wrong shapes**, you'll get a NumPy shape mismatch error — not a cryptic autograd graph error. You'll learn to think in shapes.
+- **Every value you cache on `self` in `forward`** (like `self.inputs` or `self.z`) is cached for one reason: `backward` needs it. There is no tape, no graph, no magic — just stored NumPy arrays and chain rule math.
+
+This is the defining educational feature of the library. You can't hand-wave through gradient descent here. You must understand where gradients come from.
+
 ## Try it yourself
 
 Here's how you'd create a custom `MyDense` layer from scratch:
