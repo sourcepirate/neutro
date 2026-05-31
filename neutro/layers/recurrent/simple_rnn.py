@@ -45,7 +45,13 @@ class SimpleRNN(Layer):
         
         for t in range(timesteps - 1, -1, -1):
             dh = (grad_output[:, t, :] if self.return_sequences else (grad_output if t == timesteps - 1 else 0)) + dh_next
-            dz = dh * (1 - self.h_states[:, t+1, :]**2)
+            # Apply the derivative of the hidden-state activation.
+            # tanh: d(tanh(z))/dz = 1 - tanh(z)^2 = 1 - h_t^2
+            # linear: d(z)/dz = 1, so dz = dh
+            if self.activation_name == 'tanh':
+                dz = dh * (1 - self.h_states[:, t+1, :]**2)
+            else:
+                dz = dh
             d_Wx += np.dot(self.inputs[:, t, :].T, dz)
             d_Wh += np.dot(self.h_states[:, t, :].T, dz)
             d_b += np.sum(dz, axis=0)

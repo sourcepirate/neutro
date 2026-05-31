@@ -24,19 +24,23 @@ class RMSNorm(Layer):
         return self.x_norm * self.params['weight']
 
     def backward(self, grad_output):
-        # Naive but educational implementation of RMSNorm backward
-        # dW
-        self.grads['weight'] = np.sum(grad_output * self.x_norm, axis=(0, 1))
-        
+        # dW: sum over all axes except the last (feature) axis so the result
+        # has the same shape as params['weight'] regardless of input rank
+        # (works for 2-D (batch, dim), 3-D (batch, seq, dim), etc.)
+        feature_axes = tuple(range(len(grad_output.shape) - 1))
+        self.grads['weight'] = np.sum(grad_output * self.x_norm, axis=feature_axes)
+
         # dX
         N = self.dim
         grad_x_norm = grad_output * self.params['weight']
-        
+
         # Backward through: x / sqrt(mean(x^2) + eps)
-        # Detailed derivation for the old folks:
-        # dx = (grad_x_norm / rms) - (x * sum(grad_x_norm * x) / (N * rms^3))
-        
+        # Derivation:
+        #   rms = sqrt(mean(x^2) + eps),  d_rms/dx_j = x_j / (N * rms)
+        #   d_xnorm_i/dx_j = delta_ij/rms - x_i*x_j / (N * rms^3)
+        #   dL/dx_j = grad_x_norm_j/rms - x_j * sum(grad_x_norm*x) / (N * rms^3)
+
         sum_grad_x = np.sum(grad_x_norm * self.x, axis=-1, keepdims=True)
         dx = (grad_x_norm / self.rms) - (self.x * sum_grad_x / (N * self.rms**3))
-        
+
         return dx
