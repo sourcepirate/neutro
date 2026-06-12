@@ -63,7 +63,10 @@ class Model(Layer):
 
     def compile(self, optimizer, loss, metrics=None):
         self.optimizer = optimizer
-        self.loss_fn = losses_module.get(loss)
+        if isinstance(loss, str):
+            self.loss_fn = losses_module.get(loss)
+        else:
+            self.loss_fn = loss
         self.metrics = [metrics_module.get(m) for m in (metrics or [])]
 
     def _get_all_layers(self, layers=None, visited=None):

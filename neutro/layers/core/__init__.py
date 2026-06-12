@@ -1,3 +1,4 @@
+from .bitlinear import BitLinear
 from .dense import Dense
 from .dropout import Dropout
 from .flatten import Flatten
