@@ -17,11 +17,19 @@ Let's be honest: modern DL frameworks are black boxes. You pip install 4GB of bi
 - **A Toy, not a Tool**: This isn't meant for production. It's a playground for learning advanced algorithms (MHA, GQA, FlashAttention, LSTM) in their purest form.
 - **For the Wisdom-Rich**: If you remember when 64MB of RAM was a flex and "vectorization" meant loop unrolling, this is for you. It's a fun way to play with cutting-edge 2024 algorithms using 1990s-era clarity.
 
-## 🚫 No Autograd
+## 🔄 Autograd — From Scratch, In NumPy
 
-Unlike PyTorch or TensorFlow, `neutro` has **zero automatic differentiation**. You will not find an `autograd` engine here. Every gradient is computed by hand — each layer implements its own `backward` method using explicit matrix multiplications and the chain rule.
+Unlike TensorFlow or JAX, `neutro` doesn't import a third-party autograd engine — **it is its own autograd engine**.
 
-This is not a bug, it's the feature. Writing `self.grads['W'] = inputs.T @ grad_output` is how you *learn* what backpropagation actually does.
+We built `neutro.autograd` from scratch in pure NumPy: a `Tensor` wrapper with a `GradientTape` that records every operation and computes gradients via reverse-mode AD. Ops like `softmax`, `matmul`, and `relu` all register backward closures on the tape.
+
+### Two ways to learn backprop:
+
+1. **The Tape (default)**: Most layers use `base.Layer.backward()` which re-runs the forward pass inside a `GradientTape` and lets the tape compute all gradients automatically. This is clean, composable, and easy to maintain.
+
+2. **The Manual Way**: Any layer can override `backward(grad_output)` and compute gradients with explicit chain rule math. This is still supported and used by a few layers where the educational value of hand-writing the gradient is highest.
+
+Both paths teach you something. The tape shows you how autograd engines work internally (`docs/autograd/`). The manual path shows you the actual chain rule math for each layer.
 
 ---
 
