@@ -119,7 +119,7 @@ def test_functional_gradients():
     y_true = np.array([[1.0]])
     
     # Forward pass to cache values
-    y_pred = model.forward(X, training=True)
+    y_pred = model(X, training=True)
     loss = model.loss_fn(y_true, y_pred)
     
     # Backward pass
@@ -136,11 +136,11 @@ def test_functional_gradients():
     orig_val = W[i, j]
     
     W[i, j] = orig_val + eps
-    y_plus = model.forward(X, training=False)
+    y_plus = model(X, training=False)
     loss_plus = model.loss_fn(y_true, y_plus)
     
     W[i, j] = orig_val - eps
-    y_minus = model.forward(X, training=False)
+    y_minus = model(X, training=False)
     loss_minus = model.loss_fn(y_true, y_minus)
     
     W[i, j] = orig_val

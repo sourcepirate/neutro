@@ -47,7 +47,7 @@ def test_clear_layer_grads_with_sublayers():
     model = Sequential([ContainerLayer(4), Dense(3)])
     model.build((None, 4))
     x = np.random.rand(2, 4)
-    out = model.forward(x, training=True)
+    out = model(x, training=True)
     grad = np.random.rand(2, 3)
     model.backward(grad)
     container = model.layers[0]
@@ -108,7 +108,7 @@ def test_backward_functional_single_output():
     outputs = Dense(3)(x)
     model = Model(inputs=inputs, outputs=outputs)
     x_data = np.random.rand(4, 10)
-    y = model.forward(x_data, training=True)
+    y = model(x_data, training=True)
     grad = np.random.rand(4, 3)
     grad_inputs = model.backward(grad)
     assert grad_inputs.shape == (4, 10)
@@ -124,7 +124,7 @@ def test_subclassed_model_build_no_override():
 def test_sequential_forward_without_kv_cache():
     model = Sequential([Dense(5, input_shape=(10,)), Dense(3)])
     x = np.random.rand(4, 10)
-    out = model.forward(x, training=False, kv_cache=None)
+    out = model(x, training=False, kv_cache=None)
     assert out.shape == (4, 3)
 
 

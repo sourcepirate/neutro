@@ -1,0 +1,5 @@
+numpy
+joblib
+scipy
+tqdm
+regex

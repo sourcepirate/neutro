@@ -1,3 +1,5 @@
+from neutro.autograd import Tensor
+
 class Loss:
     def __call__(self, y_true, y_pred):
         raise NotImplementedError

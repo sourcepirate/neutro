@@ -8,7 +8,7 @@ def test_diffusion_forward():
     
     x = np.random.randn(2, 16, 16, 1)
     # Test training forward
-    out = model.forward(x, training=True)
+    out = model(x, training=True)
     assert out.shape == (2, 16, 16, 1)
     
     # Test sampling (very few steps for speed)
@@ -20,7 +20,7 @@ def test_diffusion_inference_forward_without_timestep():
     model = DiffusionModel(unet, timesteps=10)
 
     x = np.random.randn(2, 16, 16, 1)
-    out = model.forward(x, training=False)
+    out = model(x, training=False)
     assert out.shape == x.shape
 
 def test_unet_backward():
@@ -29,6 +29,6 @@ def test_unet_backward():
     t = np.array([5])
     
     # We need to run forward to populate layer caches
-    out = unet.forward([x, t])
+    out = unet([x, t])
     grad = unet.backward(np.random.randn(1, 8, 8, 1))
     assert grad.shape == (1, 8, 8, 1)

@@ -1,5 +1,11 @@
 import numpy as np
 from .base import Optimizer
+from neutro.autograd import Tensor
+
+
+def _get_data(p):
+    return p.data if isinstance(p, Tensor) else p
+
 
 class AdamW(Optimizer):
     def __init__(self, learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-7, weight_decay=0.01):
@@ -18,20 +24,22 @@ class AdamW(Optimizer):
             if not getattr(layer, 'trainable', True):
                 continue
             for param_name, param_value in layer.params.items():
-                grad = layer.grads[param_name]
+                grad = param_value.grad if isinstance(param_value, Tensor) and param_value.grad is not None else layer.grads.get(param_name)
+                if grad is None:
+                    continue
+                param_data = _get_data(param_value)
                 key = (id(layer), param_name)
-                
+
                 if key not in self.m:
-                    self.m[key] = np.zeros_like(param_value)
-                    self.v[key] = np.zeros_like(param_value)
-                
-                # Apply weight decay directly to params (decoupled from gradient)
-                layer.params[param_name] -= self.learning_rate * self.weight_decay * layer.params[param_name]
-                
+                    self.m[key] = np.zeros_like(param_data)
+                    self.v[key] = np.zeros_like(param_data)
+
+                param_data -= self.learning_rate * self.weight_decay * param_data
+
                 self.m[key] = self.beta_1 * self.m[key] + (1 - self.beta_1) * grad
                 self.v[key] = self.beta_2 * self.v[key] + (1 - self.beta_2) * (grad**2)
-                
+
                 m_hat = self.m[key] / (1 - self.beta_1**self.t)
                 v_hat = self.v[key] / (1 - self.beta_2**self.t)
-                
-                layer.params[param_name] -= self.learning_rate * m_hat / (np.sqrt(v_hat) + self.epsilon)
+
+                param_data -= self.learning_rate * m_hat / (np.sqrt(v_hat) + self.epsilon)

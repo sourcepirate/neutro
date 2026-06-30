@@ -13,8 +13,4 @@ class Flatten(Layer):
         return (input_shape[0], int(np.prod(input_shape[1:])))
 
     def forward(self, inputs, training=False):
-        self.input_shape_orig = inputs.shape
         return inputs.reshape(inputs.shape[0], -1)
-
-    def backward(self, grad_output):
-        return grad_output.reshape(self.input_shape_orig)

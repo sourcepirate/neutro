@@ -6,7 +6,7 @@ from neutro.engine.node import KerasTensor
 
 def test_input_layer_forward():
     layer = InputLayer(input_shape=(4,))
-    out = layer.forward(np.array([1, 2, 3, 4]))
+    out = layer(np.array([1, 2, 3, 4]))
     assert np.array_equal(out, np.array([1, 2, 3, 4]))
 
 

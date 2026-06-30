@@ -40,7 +40,7 @@ def test_shared_transformer_block_backward():
     y_true = np.ones((1, 2, 1)).astype(np.float32)
 
     # Forward then backward
-    y_pred = model.forward(X, training=True)
+    y_pred = model(X, training=True)
     grad = model.loss_fn.gradient(y_true, y_pred)
     model.backward(grad)
 

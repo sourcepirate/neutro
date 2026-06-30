@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/Users/sathyanarrayanan/github/np_keras/logs/.0eac823eca77b00c47dbddda5d339e7967cf27bf-audit.json",
+    "files": [
+        {
+            "date": 1782615730868,
+            "name": "/Users/sathyanarrayanan/github/np_keras/logs/mcp-puppeteer-2026-06-28.log",
+            "hash": "83b35c01dc7c822cce0a2111d1ac56220b30fc0784da842bcdd2c23d39048f4c"
+        }
+    ],
+    "hashType": "sha256"
+}

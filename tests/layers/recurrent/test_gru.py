@@ -11,13 +11,13 @@ def test_gru_shape():
     # Test return_sequences=False
     layer = GRU(units, return_sequences=False)
     layer.build(x.shape)
-    out = layer.forward(x)
+    out = layer(x)
     assert out.shape == (batch, units)
     
     # Test return_sequences=True
     layer = GRU(units, return_sequences=True)
     layer.build(x.shape)
-    out = layer.forward(x)
+    out = layer(x)
     assert out.shape == (batch, timesteps, units)
 
 def test_gru_backward():
@@ -28,7 +28,7 @@ def test_gru_backward():
     layer = GRU(units, return_sequences=True)
     layer.build(x.shape)
     
-    out = layer.forward(x)
+    out = layer(x)
     grad_out = np.random.randn(*out.shape)
     dx = layer.backward(grad_out)
     
@@ -44,5 +44,5 @@ def test_gru_sequential():
     ])
     
     x = np.random.randn(2, 10, 8)
-    out = model.forward(x)
+    out = model(x)
     assert out.shape == (2, 8)

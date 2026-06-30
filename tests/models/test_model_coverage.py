@@ -93,7 +93,7 @@ def test_build_subclassed_model():
     model.build((None, 6))
     assert model.built
     x = np.random.rand(5, 6)
-    y = model.forward(x)
+    y = model(x)
     assert y.shape == (5, 4)
 
 
@@ -162,5 +162,5 @@ def test_forward_sequential_with_kv_cache():
     model = Sequential([block])
     x = np.random.rand(2, 4, 8)
     cache = KVCache()
-    output = model.forward(x, training=False, kv_cache=cache)
+    output = model(x, training=False, kv_cache=cache)
     assert output.shape == (2, 4, 8)
