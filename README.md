@@ -83,14 +83,24 @@ model.fit(train_flow, epochs=10)
 
 ---
 
-## 📂 Deep Dives & Nerdy Stuff
+## 📚 Documentation
+
+Every component is documented with line-by-line walkthroughs, math, and references to the original research papers.
+
+👉 **[Browse the full documentation →](./docs/README.md)**
+
+---
+
+## 🧠 Deep Dives & Nerdy Stuff
 
 We documented everything because we know you like to check the math:
 
-- [**Attention Mechanisms**](./docs/layers/attention/) - How we made FlashAttention work on a CPU.
-- [**Convolutional Magic**](./docs/layers/convolutional/) - The `im2col` deep dive.
-- [**Activations & Gradients**](./docs/activations/) - Proofs for the brave.
-- [**Optimizers**](./docs/optimizers/) - Why AdamW is better than your ex.
+- [**Documentation Home**](./docs/README.md) — Start here for the full index with research paper links.
+- [**Attention Mechanisms**](./docs/layers/attention/) — How we made FlashAttention work on a CPU.
+- [**Convolutional Magic**](./docs/layers/convolutional/) — The `im2col` deep dive.
+- [**Activations & Gradients**](./docs/activations/) — Proofs for the brave.
+- [**Autograd Engine**](./docs/autograd/) — How we do automatic differentiation.
+- [**Optimizers**](./docs/optimizers/) — Why AdamW is better than your ex.
 
 ---
 
