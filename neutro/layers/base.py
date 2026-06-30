@@ -47,7 +47,13 @@ class Layer:
         """
         Counts the total number of parameters in this layer and its sublayers.
         """
-        count = sum(p.size for p in self.params.values())
+        from neutro.autograd import Tensor as AutoTensor
+        count = 0
+        for p in self.params.values():
+            if isinstance(p, AutoTensor):
+                count += p.data.size
+            else:
+                count += p.size
         for layer in self.sublayers:
             count += layer.count_params()
         return count
@@ -62,7 +68,62 @@ class Layer:
         return input_shape
 
     def backward(self, grad_output):
-        raise NotImplementedError
+        from neutro.autograd import Tensor as AT, GradientTape
+        inputs = getattr(self, '_last_inputs', None)
+        if inputs is None:
+            return np.asarray(grad_output)
+
+        if isinstance(inputs, list):
+            t_inputs = [AT(i) if not isinstance(i, AT) else i for i in inputs]
+        elif not isinstance(inputs, AT):
+            t_inputs = AT(np.asarray(inputs))
+        else:
+            t_inputs = inputs
+
+        fwd_args = getattr(self, '_last_args', ())
+        fwd_kwargs = getattr(self, '_last_kwargs', {}).copy()
+        fwd_kwargs.pop('kv_cache', None)
+        fwd_kwargs.pop('layer_id', None)
+        tensor_params = {}
+        stack_layers = [self]
+        while stack_layers:
+            l = stack_layers.pop()
+            for pn, pv in l.params.items():
+                if isinstance(pv, AT):
+                    tensor_params[(id(l), pn)] = pv
+            for sl in l.sublayers:
+                stack_layers.append(sl)
+        all_sources = list(tensor_params.values())
+        if isinstance(t_inputs, list):
+            all_sources.extend(t_inputs)
+        else:
+            all_sources.append(t_inputs)
+
+        with GradientTape() as tape:
+            for s in all_sources:
+                tape.watch(s)
+            output = self.forward(t_inputs, *fwd_args, **fwd_kwargs)
+            g_t = AT(np.asarray(grad_output))
+            if isinstance(output, list):
+                loss = sum((o * g).sum() for o, g in zip(output, g_t))
+            else:
+                loss = (output * g_t).sum()
+
+        tape.gradient(loss, all_sources)
+
+        stack_l = [self]
+        while stack_l:
+            l = stack_l.pop()
+            for pn, pv in l.params.items():
+                from neutro.autograd import Tensor as AT2
+                if isinstance(pv, AT2) and pv.grad is not None:
+                    l.grads[pn] = pv.grad.copy()
+            for sl in l.sublayers:
+                stack_l.append(sl)
+
+        if isinstance(t_inputs, list):
+            return [t.grad.copy() if t.grad is not None else None for t in t_inputs]
+        return t_inputs.grad.copy() if t_inputs.grad is not None else None
 
     def __call__(self, inputs, *args, **kwargs):
         from ..engine.node import KerasTensor, Node
@@ -97,12 +158,19 @@ class Layer:
             return output_tensors
 
         # Eager call (Sequential or manual)
+        from neutro.autograd import as_tensor as _as_tensor
+        t_inputs = _as_tensor(inputs)
         if not self.built:
-            if isinstance(inputs, list):
-                self.build([i.shape for i in inputs])
+            if isinstance(t_inputs, list):
+                self.build([i.shape for i in t_inputs])
             else:
-                self.build(inputs.shape)
-        return self.forward(inputs, *args, **kwargs)
+                self.build(t_inputs.shape)
+        self._last_inputs = t_inputs
+        self._last_args = args
+        self._last_kwargs = kwargs
+        output = self.forward(t_inputs, *args, **kwargs)
+        self._last_output = output
+        return output
 
     def get_params(self):
         return self.params

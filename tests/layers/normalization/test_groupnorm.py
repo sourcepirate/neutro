@@ -5,7 +5,7 @@ def test_group_norm():
     layer = GroupNormalization(groups=2)
     x = np.random.randn(2, 4, 4, 4)
     layer.build(x.shape)
-    out = layer.forward(x)
+    out = layer(x)
     assert out.shape == x.shape
     
     # Check if groups have mean 0 and var 1 (approximately)

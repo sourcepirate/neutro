@@ -8,7 +8,7 @@ class TestMultiply:
         layer = Multiply()
         a = np.array([[1, 2], [3, 4]])
         b = np.array([[5, 6], [7, 8]])
-        out = layer.forward([a, b])
+        out = layer([a, b])
         expected = a * b
         np.testing.assert_array_equal(out, expected)
 
@@ -16,7 +16,7 @@ class TestMultiply:
         layer = Multiply()
         a = np.array([[1.0, 2.0], [3.0, 4.0]])
         b = np.array([[5.0, 6.0], [7.0, 8.0]])
-        layer.forward([a, b])
+        layer([a, b])
         grad = np.array([[1.0, 1.0], [1.0, 1.0]])
         grads = layer.backward(grad)
         assert len(grads) == 2
@@ -39,7 +39,7 @@ class TestAverage:
         layer = Average()
         a = np.array([[1.0, 3.0], [5.0, 7.0]])
         b = np.array([[2.0, 4.0], [6.0, 8.0]])
-        out = layer.forward([a, b])
+        out = layer([a, b])
         expected = (a + b) / 2
         np.testing.assert_array_equal(out, expected)
 
@@ -60,7 +60,7 @@ class TestMaximum:
         layer = Maximum()
         a = np.array([[1.0, 5.0], [3.0, 2.0]])
         b = np.array([[4.0, 2.0], [1.0, 6.0]])
-        out = layer.forward([a, b])
+        out = layer([a, b])
         expected = np.maximum(a, b)
         np.testing.assert_array_equal(out, expected)
 
@@ -68,7 +68,7 @@ class TestMaximum:
         layer = Maximum()
         a = np.array([[1.0, 5.0], [3.0, 2.0]])
         b = np.array([[4.0, 2.0], [1.0, 6.0]])
-        layer.forward([a, b])
+        layer([a, b])
         grad = np.array([[1.0, 1.0], [1.0, 1.0]])
         grads = layer.backward(grad)
         assert len(grads) == 2
@@ -88,7 +88,7 @@ class TestMinimum:
         layer = Minimum()
         a = np.array([[1.0, 5.0], [3.0, 2.0]])
         b = np.array([[4.0, 2.0], [1.0, 6.0]])
-        out = layer.forward([a, b])
+        out = layer([a, b])
         expected = np.minimum(a, b)
         np.testing.assert_array_equal(out, expected)
 
@@ -96,7 +96,7 @@ class TestMinimum:
         layer = Minimum()
         a = np.array([[1.0, 5.0], [3.0, 2.0]])
         b = np.array([[4.0, 2.0], [1.0, 6.0]])
-        layer.forward([a, b])
+        layer([a, b])
         grad = np.array([[1.0, 1.0], [1.0, 1.0]])
         grads = layer.backward(grad)
         assert len(grads) == 2

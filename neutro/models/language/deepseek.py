@@ -1,4 +1,3 @@
-import numpy as np
 from ..base_model import Sequential
 from ...layers.base import Layer
 from ...layers.attention.flash_attention import FlashAttention
@@ -10,8 +9,11 @@ from ...layers.embedding.embedding import Embedding
 
 class DeepSeekMoEBlock(Layer):
     """
-    DeepSeek MoE Block.
-    Supports standard Attention or MLA, and MoE.
+    DeepSeek MoE Block with optional MLA and shared expert.
+
+    Residual path:
+        h   = x + Attention(Norm(x))
+        out = h + MoE(Norm(h)) + SharedExpert(Norm(h))
     """
     def __init__(self, dim, n_heads, n_experts, top_k, use_mla=False, **kwargs):
         super().__init__(**kwargs)
@@ -19,15 +21,12 @@ class DeepSeekMoEBlock(Layer):
             self.attention = MultiHeadLatentAttention(num_heads=n_heads, head_dim=dim//n_heads, latent_dim=dim//2, kv_latent_dim=dim//4)
         else:
             self.attention = FlashAttention(num_heads=n_heads, key_dim=dim, use_rope=True)
-            
+
         self.attention_norm = RMSNorm()
         self.ffn_norm = RMSNorm()
-        
-        # The MoE part
-        self.moe = MoELayer(num_experts=n_experts, top_k=top_k, expert_units=dim*2)
-        # DeepSeek also has shared experts
-        self.shared_expert = Dense(dim)
 
+        self.moe = MoELayer(num_experts=n_experts, top_k=top_k, expert_units=dim*2)
+        self.shared_expert = Dense(dim)
 
     def build(self, input_shape):
         self.attention.build(input_shape)
@@ -38,35 +37,15 @@ class DeepSeekMoEBlock(Layer):
         super().build(input_shape)
 
     def forward(self, x, training=False, mask=None, kv_cache=None, layer_id=None):
-        # Attention
-        self.attn_norm_out = self.attention_norm(x, training)
-        self.attn_out = self.attention(self.attn_norm_out, mask=mask, training=training, kv_cache=kv_cache, layer_id=layer_id)
-        self.h = x + self.attn_out
-        
-        # MoE + Shared Expert
-        self.ffn_norm_out = self.ffn_norm(self.h, training)
-        self.moe_out = self.moe(self.ffn_norm_out, training)
-        self.shared_out = self.shared_expert(self.ffn_norm_out, training)
-        
-        return self.h + self.moe_out + self.shared_out
+        attn_norm_out = self.attention_norm(x, training)
+        attn_out = self.attention(attn_norm_out, mask=mask, training=training, kv_cache=kv_cache, layer_id=layer_id)
+        h = x + attn_out
 
-    def backward(self, grad_output):
-        # ffn_norm path
-        grad_moe = self.moe.backward(grad_output)
-        grad_shared = self.shared_expert.backward(grad_output)
-        grad_ffn_norm = self.ffn_norm.backward(grad_moe + grad_shared)
-        
-        # Residual from h
-        grad_h = grad_output + grad_ffn_norm
-        
-        # attention path
-        grad_attn = self.attention.backward(grad_h)
-        grad_attn_norm = self.attention_norm.backward(grad_attn)
-        
-        # Residual from x
-        grad_x = grad_h + grad_attn_norm
-        
-        return grad_x
+        ffn_norm_out = self.ffn_norm(h, training)
+        moe_out = self.moe(ffn_norm_out, training)
+        shared_out = self.shared_expert(ffn_norm_out, training)
+
+        return h + moe_out + shared_out
 
 def DeepSeekV1Tiny(vocab_size, seq_len, dim=512, n_layers=2, n_heads=8):
     """

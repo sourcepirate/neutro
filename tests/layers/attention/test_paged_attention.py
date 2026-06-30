@@ -163,8 +163,8 @@ class TestPagedAttention:
         pa.params['Wv'] = mha.params['Wv'].copy()
         pa.params['Wo'] = mha.params['Wo'].copy()
 
-        out_mha = mha.forward(x)
-        out_pa = pa.forward(x)
+        out_mha = mha(x)
+        out_pa = pa(x)
 
         np.testing.assert_allclose(out_mha, out_pa, atol=1e-5)
 
@@ -186,8 +186,8 @@ class TestPagedAttention:
         pa.params['Wv'] = mha.params['Wv'].copy()
         pa.params['Wo'] = mha.params['Wo'].copy()
 
-        mha.forward(x)
-        pa.forward(x)
+        mha(x)
+        pa(x)
 
         dx_mha = mha.backward(grad_out)
         dx_pa = pa.backward(grad_out)
@@ -299,8 +299,8 @@ class TestPagedAttention:
         pa.params['Wv'] = fa.params['Wv'].copy()
         pa.params['Wo'] = fa.params['Wo'].copy()
 
-        fa.forward(x)
-        pa.forward(x)
+        fa(x)
+        pa(x)
 
         dx_fa = fa.backward(grad_out)
         dx_pa = pa.backward(grad_out)
@@ -409,8 +409,8 @@ class TestPagedAttention:
         pa.params['Wv'] = mha.params['Wv'].copy()
         pa.params['Wo'] = mha.params['Wo'].copy()
 
-        out_mha = mha.forward(x)
-        out_pa = pa.forward(x)
+        out_mha = mha(x)
+        out_pa = pa(x)
         np.testing.assert_allclose(out_mha, out_pa, atol=1e-5)
 
     def test_model_integration_sequential(self):
@@ -451,12 +451,12 @@ class TestPagedAttention:
         assert logits.shape == (1, 3, vocab_size)
 
         cache = PagedKVCache(num_blocks=16, block_size=4)
-        logits_cached = model.forward(input_tokens, kv_cache=cache)
+        logits_cached = model(input_tokens, kv_cache=cache)
         assert logits_cached.shape == (1, 3, vocab_size)
         assert cache.get_num_tokens(0) == 3
 
         new_token = np.random.randint(0, vocab_size, (1, 1))
-        logits_next = model.forward(new_token, kv_cache=cache)
+        logits_next = model(new_token, kv_cache=cache)
         assert logits_next.shape == (1, 1, vocab_size)
         assert cache.get_num_tokens(0) == 4
 
@@ -556,8 +556,8 @@ class TestPagedAttention:
 
         cache = PagedKVCache(num_blocks=16, block_size=4)
 
-        mha.forward(x)
-        pa.forward(x, kv_cache=cache, layer_id=0)
+        mha(x)
+        pa(x, kv_cache=cache, layer_id=0)
 
         dx_mha = mha.backward(grad_out)
         dx_pa = pa.backward(grad_out)

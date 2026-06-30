@@ -8,7 +8,7 @@ You are an agent working on `neutro`, an "intentionally naive" and educational i
 2.  **Keras API Fidelity**: Maintain strict compatibility with Keras/TensorFlow APIs (`compile`, `fit`, `predict`, `evaluate`, `summary`, `Sequential`, `Model`).
 3.  **Educational Clarity**: Code should be readable and reflect the underlying mathematical algorithms (e.g., FlashAttention, MoE routing, RoPE). Use clear variable names and minimal but impactful comments.
 4.  **No Magic**: Avoid complex meta-programming or obscure libraries. If a layer needs a backward pass, implement it explicitly.
-5.  **No Autograd**: `neutro` has no automatic differentiation engine. There is no equivalent of PyTorch's `autograd` or JAX's `grad`. Every layer MUST implement its own `backward(grad_output)` that manually computes gradients using the chain rule. This is the defining educational feature of the library — you *are* the autograd engine.
+5.  **No Autograd (default)**: `neutro` layers MUST implement their own `backward(grad_output)` that manually computes gradients using the chain rule. This is the primary educational path — you *are* the autograd engine. An **optional** `neutro.autograd` subpackage provides a reverse-mode AD engine built from scratch in NumPy (PyTorch-style define-by-run). Layers need not use it; it exists as an educational supplement showing how autograd engines work internally.
 6.  **Nested Training**: Ensure that nested layers (layers within blocks) are discovered and updated by the optimizer. Use `Layer.sublayers` to traverse the hierarchy.
 
 ## Implementation Details
@@ -36,7 +36,7 @@ You are an agent working on `neutro`, an "intentionally naive" and educational i
 
 ## Documentation Sync
 
-Whenever you modify a source file under `neutro/layers/`, `neutro/models/`, or `neutro/engine/`, you MUST update its corresponding documentation file under `docs/`. The doc path mirrors the source path (e.g., `neutro/layers/core/dense.py` ↔ `docs/layers/core/dense.md`).
+Whenever you modify a source file under `neutro/layers/`, `neutro/models/`, `neutro/engine/`, or `neutro/autograd/`, you MUST update its corresponding documentation file under `docs/`. The doc path mirrors the source path (e.g., `neutro/layers/core/dense.py` ↔ `docs/layers/core/dense.md`; `neutro/autograd/tensor.py` ↔ `docs/autograd/tensor.md`).
 
 Required for every doc change:
 - Follow the **line-by-line walkthrough** style: explain `__init__`, `build`, `forward`, `backward` in sequence.

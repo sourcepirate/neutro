@@ -3,7 +3,8 @@ from ...engine.node import KerasTensor, Node
 
 class InputLayer(Layer):
     """
-    Layer to be used as an entry point into a Network (a graph of layers).
+    Entry point into a computation graph (like Keras InputLayer).
+    No trainable params — just passes inputs through as the root of the graph.
     """
     def __init__(self, input_shape=None, name=None, **kwargs):
         super().__init__(name=name, input_shape=input_shape, **kwargs)
@@ -12,18 +13,10 @@ class InputLayer(Layer):
 
     def build(self, input_shape):
         self.input_shape = input_shape
-        # Add batch dimension if missing
-        if len(input_shape) > 0 and input_shape[0] is not None:
-            # We assume users might pass (28, 28, 1) or (None, 28, 28, 1)
-            # Keras usually expects input_shape to NOT include batch.
-            pass 
         self.built = True
 
     def forward(self, inputs, training=False):
         return inputs
-
-    def backward(self, grad_output):
-        return grad_output
 
 def Input(shape=None, name=None, **kwargs):
     """

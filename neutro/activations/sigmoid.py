@@ -1,10 +1,10 @@
 import numpy as np
 from .base import Activation
+from neutro.autograd import ops as autograd_ops
 
 class Sigmoid(Activation):
     def __call__(self, x):
-        self.last_output = 1 / (1 + np.exp(-np.clip(x, -500, 500)))
-        return self.last_output
+        return autograd_ops.sigmoid(x)
     def gradient(self, x):
-        s = self.__call__(x)
+        s = 1 / (1 + np.exp(-np.clip(x, -500, 500)))
         return s * (1 - s)

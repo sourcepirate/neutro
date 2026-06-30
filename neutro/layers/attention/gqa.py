@@ -1,6 +1,8 @@
 import numpy as np
 from .base_attention import BaseAttention
 from ...initializers import get as get_initializer
+from neutro.autograd import Tensor, ops as autograd_ops
+
 
 class GroupedQueryAttention(BaseAttention):
     def __init__(self, num_heads, num_groups, key_dim):
@@ -14,20 +16,22 @@ class GroupedQueryAttention(BaseAttention):
     def build(self, input_shape):
         self.embed_dim = input_shape[-1]
         init = get_initializer('glorot_uniform')
-        self.params['Wq'], self.params['Wk'], self.params['Wv'] = init((self.embed_dim, self.key_dim)), init((self.embed_dim, self.num_groups * self.head_dim)), init((self.embed_dim, self.num_groups * self.head_dim))
-        self.params['Wo'] = init((self.key_dim, self.embed_dim))
+        self.params['Wq'] = Tensor(init((self.embed_dim, self.key_dim)))
+        self.params['Wk'] = Tensor(init((self.embed_dim, self.num_groups * self.head_dim)))
+        self.params['Wv'] = Tensor(init((self.embed_dim, self.num_groups * self.head_dim)))
+        self.params['Wo'] = Tensor(init((self.key_dim, self.embed_dim)))
         super().build(input_shape)
 
     def forward(self, query, value=None, key=None, mask=None, training=False):
         if value is None: value = query
         if key is None: key = value
         batch_size = query.shape[0]
-        Q = np.dot(query, self.params['Wq']).reshape(batch_size, -1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        K, V = np.dot(key, self.params['Wk']).reshape(batch_size, -1, self.num_groups, self.head_dim).transpose(0, 2, 1, 3), np.dot(value, self.params['Wv']).reshape(batch_size, -1, self.num_groups, self.head_dim).transpose(0, 2, 1, 3)
-        K, V = np.repeat(K, self.heads_per_group, axis=1), np.repeat(V, self.heads_per_group, axis=1)
+        Q = (query @ self.params['Wq']).reshape(batch_size, -1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        K = (key @ self.params['Wk']).reshape(batch_size, -1, self.num_groups, self.head_dim).transpose(0, 2, 1, 3)
+        V = (value @ self.params['Wv']).reshape(batch_size, -1, self.num_groups, self.head_dim).transpose(0, 2, 1, 3)
+        if self.heads_per_group > 1:
+            K = autograd_ops.concatenate([K] * self.heads_per_group, axis=1)
+            V = autograd_ops.concatenate([V] * self.heads_per_group, axis=1)
         attn_output = self.scaled_dot_product_attention(Q, K, V, mask)
         out = attn_output.transpose(0, 2, 1, 3).reshape(batch_size, -1, self.key_dim)
-        return np.dot(out, self.params['Wo'])
-
-    def backward(self, grad_output):
-        return None
+        return out @ self.params['Wo']

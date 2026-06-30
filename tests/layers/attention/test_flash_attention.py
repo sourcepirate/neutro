@@ -22,8 +22,8 @@ def test_flash_attention_parity():
     flash.params['Wv'] = mha.params['Wv'].copy()
     flash.params['Wo'] = mha.params['Wo'].copy()
     
-    out_mha = mha.forward(x)
-    out_flash = flash.forward(x)
+    out_mha = mha(x)
+    out_flash = flash(x)
     
     # Check parity
     np.testing.assert_allclose(out_mha, out_flash, atol=1e-5)
@@ -50,8 +50,8 @@ def test_flash_attention_gradient_parity():
     flash.params['Wo'] = mha.params['Wo'].copy()
     
     # Forward
-    out_mha = mha.forward(x)
-    out_flash = flash.forward(x)
+    out_mha = mha(x)
+    out_flash = flash(x)
     
     # Backward
     dx_mha = mha.backward(grad_out)

@@ -326,6 +326,174 @@ class Model(Layer):
         for cb in all_callbacks: cb.on_train_end(logs)
         return history
 
+    @property
+    def trainable_params(self):
+        from neutro.autograd import Tensor as AutoTensor
+        params = []
+        for layer in self._get_all_layers():
+            if getattr(layer, 'trainable', True):
+                for p in layer.params.values():
+                    if isinstance(p, AutoTensor):
+                        params.append(p)
+        return params
+
+    def _zero_all_grads(self):
+        for p in self.trainable_params:
+            p.zero_grad()
+
+    def autograd_fit(self, x, y=None, epochs=1, batch_size=32, verbose=1, validation_data=None, callbacks=None):
+        from neutro.autograd import GradientTape, Tensor as AutoTensor
+        from ..callbacks import History
+
+        is_mimo_x = isinstance(x, list)
+        is_mimo_y = isinstance(y, list)
+
+        if not is_mimo_x and hasattr(x, '__iter__') and not isinstance(x, np.ndarray):
+            n_samples = len(x) * x.batch_size if hasattr(x, 'batch_size') else len(x)
+            use_generator = True
+        else:
+            use_generator = False
+            if is_mimo_x:
+                n_samples = x[0].shape[0]
+            else:
+                n_samples = x.shape[0]
+
+        history = History()
+        history.set_model(self)
+        all_callbacks = [history] + (callbacks or [])
+        for cb in all_callbacks:
+            cb.set_model(self)
+
+        logs = {}
+        for cb in all_callbacks: cb.on_train_begin(logs)
+
+        for epoch in range(epochs):
+            if self.stop_training: break
+            for cb in all_callbacks: cb.on_epoch_begin(epoch, logs)
+
+            epoch_loss = 0
+            epoch_metrics = {m.get_name(): 0 for m in self.metrics}
+
+            if use_generator:
+                num_batches = len(x)
+                data_iter = iter(x)
+            else:
+                indices = np.arange(n_samples)
+                np.random.shuffle(indices)
+                if is_mimo_x:
+                    x_shuffled = [xi[indices] for xi in x]
+                else:
+                    x_shuffled = x[indices]
+                if is_mimo_y:
+                    y_shuffled = [yi[indices] for yi in y]
+                else:
+                    y_shuffled = y[indices]
+                num_batches = int(np.ceil(n_samples / batch_size))
+
+            total_seen = 0
+            if verbose == 1:
+                pbar = tqdm(total=num_batches, desc=f"Epoch {epoch+1}/{epochs}")
+
+            for i in range(num_batches):
+                if use_generator:
+                    x_batch, y_batch = next(data_iter)
+                else:
+                    start, end = i * batch_size, min((i + 1) * batch_size, n_samples)
+                    if is_mimo_x:
+                        x_batch = [xi[start:end] for xi in x_shuffled]
+                    else:
+                        x_batch = x_shuffled[start:end]
+                    if is_mimo_y:
+                        y_batch = [yi[start:end] for yi in y_shuffled]
+                    else:
+                        y_batch = y_shuffled[start:end]
+
+                batch_size_actual = x_batch[0].shape[0] if is_mimo_x else len(x_batch)
+                total_seen += batch_size_actual
+
+                for cb in all_callbacks: cb.on_batch_begin(i, logs)
+
+                with GradientTape() as tape:
+                    for p in self.trainable_params:
+                        tape.watch(p)
+                    output = self.forward(x_batch, training=True)
+                    if isinstance(self.outputs, list) and len(self.outputs) > 1:
+                        if is_mimo_y:
+                            loss = sum(self.loss_fn(y_batch[j], output[j]) for j in range(len(self.outputs)))
+                        else:
+                            loss = sum(self.loss_fn(y_batch, o) for o in output)
+                    else:
+                        loss = self.loss_fn(y_batch, output)
+
+                loss_data = float(loss.data) if isinstance(loss, AutoTensor) else float(loss)
+                epoch_loss += loss_data * batch_size_actual
+
+                tape.gradient(loss, self.trainable_params)
+
+                all_trainable_layers = self._get_all_layers()
+                self.optimizer.step(all_trainable_layers)
+                self._zero_all_grads()
+
+                for m in self.metrics:
+                    try:
+                        m_val = m(y_batch, output)
+                    except (TypeError, ValueError):
+                        m_val = m(y_batch[0], output[0]) if isinstance(output, list) else 0.0
+                    epoch_metrics[m.get_name()] += m_val * batch_size_actual
+
+                for cb in all_callbacks: cb.on_batch_end(i, logs)
+
+                if verbose == 1:
+                    postfix = {'loss': f"{epoch_loss / total_seen:.4f}"}
+                    for m in self.metrics:
+                        postfix[m.get_name()] = f"{epoch_metrics[m.get_name()] / total_seen:.4f}"
+                    pbar.set_postfix(postfix)
+                    pbar.update(1)
+
+            if verbose == 1:
+                pbar.close()
+
+            logs = {
+                'loss': epoch_loss / total_seen,
+                **{k: v / total_seen for k, v in epoch_metrics.items()}
+            }
+
+            if validation_data:
+                val_x, val_y = validation_data
+                val_output = self.predict(val_x)
+                if isinstance(self.outputs, list):
+                    logs['val_loss'] = sum(self.loss_fn(val_y[j], val_output[j]) for j in range(len(self.outputs)))
+                else:
+                    logs['val_loss'] = self.loss_fn(val_y, val_output)
+                for m in self.metrics:
+                    try:
+                        m_val = m(val_y, val_output)
+                    except (TypeError, ValueError):
+                        m_val = m(val_y[0], val_output[0]) if isinstance(self.outputs, list) else 0.0
+                    logs[f'val_{m.get_name()}'] = m_val
+
+            for cb in all_callbacks: cb.on_epoch_end(epoch, logs)
+
+            if verbose:
+                if verbose == 1:
+                    if validation_data:
+                        val_msg = f" - val_loss: {logs['val_loss']:.4f}"
+                        for m in self.metrics:
+                            val_msg += f" - val_{m.get_name()}: {logs[f'val_{m.get_name()}']:.4f}"
+                        print(val_msg)
+                else:
+                    msg = f"Epoch {epoch+1}/{epochs} - loss: {logs['loss']:.4f}"
+                    for m in self.metrics:
+                        msg += f" - {m.get_name()}: {logs[m.get_name()]:.4f}"
+                    if validation_data:
+                        msg += f" - val_loss: {logs['val_loss']:.4f}"
+                        for m in self.metrics:
+                            msg += f" - val_{m.get_name()}: {logs[f'val_{m.get_name()}']:.4f}"
+                    print(msg)
+
+        for cb in all_callbacks: cb.on_train_end(logs)
+        return history
+
     def forward(self, inputs, training=False, kv_cache=None):
         if self.inputs is not None:
             # Functional API forward pass
@@ -350,6 +518,9 @@ class Model(Layer):
                     node_inputs = tensor_map.get(id(node.input_tensors))
                 
                 output = node.layer.forward(node_inputs, training=training)
+                from neutro.autograd import as_tensor
+                node.layer._last_inputs = as_tensor(node_inputs)
+                node.layer._last_kwargs = {'training': training}
                 
                 # Capture state AFTER forward so it captures the current call's data
                 node.state = self._capture_layer_state(node.layer)
@@ -459,6 +630,8 @@ class Model(Layer):
                 
                 # Propagate gradients to inputs
                 if isinstance(node.input_tensors, list):
+                    if not isinstance(grad_inputs, list):
+                        grad_inputs = [grad_inputs]
                     for i, t in enumerate(node.input_tensors):
                         t_id = id(t)
                         if t_id in grad_map:
@@ -523,6 +696,13 @@ class Model(Layer):
     def predict(self, x):
         return self.forward(x, training=False)
 
+    @staticmethod
+    def _to_scalar(v):
+        from neutro.autograd import Tensor as AT
+        if isinstance(v, AT):
+            return float(v.data)
+        return float(v)
+
     def evaluate(self, x, y):
         is_mimo_out = isinstance(self.outputs, list)
         output = self.predict(x)
@@ -530,13 +710,13 @@ class Model(Layer):
             loss = sum(self.loss_fn(y[j], output[j]) for j in range(len(self.outputs)))
         else:
             loss = self.loss_fn(y, output)
-        results = {'loss': loss}
+        results = {'loss': self._to_scalar(loss)}
         for m in self.metrics:
             try:
                 m_val = m(y, output)
             except (TypeError, ValueError):
                 m_val = m(y[0], output[0]) if is_mimo_out else 0.0
-            results[m.get_name()] = m_val
+            results[m.get_name()] = self._to_scalar(m_val) if not isinstance(m_val, float) else m_val
         return results
 
     def summary(self):

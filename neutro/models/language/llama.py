@@ -11,8 +11,13 @@ from ...utils.rope_utils import precompute_freqs_cis, apply_rotary_emb
 
 class LlamaMLP(Layer):
     """
-    The Llama MLP using SwiGLU. 
-    It's basically a three-way Dense layer party.
+    The Llama MLP using SwiGLU.
+
+    SwiGLU(x) = (SiLU(x @ W1) * (x @ W3)) @ W2
+
+    Shapes:
+        x: (B, S, D) → gate: (B, S, U) → SiLU → (B, S, U)
+        value: (B, S, U) → mul: (B, S, U) → (B, S, D)
     """
     def __init__(self, dim, hidden_dim, **kwargs):
         super().__init__(**kwargs)
@@ -28,35 +33,20 @@ class LlamaMLP(Layer):
         super().build(input_shape)
 
     def forward(self, x, training=False):
-        self.x = x
-        # SwiGLU: (SiLU(x @ w1) * (x @ w3)) @ w2
-        self.gate = self.w1(x, training)
-        self.activated_gate = self.silu(self.gate)
-        self.value = self.w3(x, training)
-        self.multiplied = self.activated_gate * self.value
-        return self.w2(self.multiplied, training)
-
-    def backward(self, grad_output):
-        # 1. Backprop through w2
-        # grad_output is (batch, seq, dim)
-        grad_multiplied = self.w2.backward(grad_output)
-        
-        # 2. Backprop through element-wise multiplication
-        # multiplied = activated_gate * value
-        grad_activated_gate = grad_multiplied * self.value
-        grad_value = grad_multiplied * self.activated_gate
-        
-        # 3. Backprop through SiLU
-        grad_gate = grad_activated_gate * self.silu.gradient(self.gate)
-        
-        # 4. Backprop through w1 and w3
-        grad_x_w1 = self.w1.backward(grad_gate)
-        grad_x_w3 = self.w3.backward(grad_value)
-        
-        # 5. Total grad_x
-        return grad_x_w1 + grad_x_w3
+        gate = self.w1(x, training)
+        activated_gate = self.silu(gate)
+        value = self.w3(x, training)
+        multiplied = activated_gate * value
+        return self.w2(multiplied, training)
 
 class LlamaBlock(Layer):
+    """
+    A single Llama decoder block with Pre-Norm, RoPE attention, and SwiGLU FFN.
+
+    Residual path:
+        h  = x + Attention(Norm(x))
+        out = h + SwiGLU(Norm(h))
+    """
     def __init__(self, dim, n_heads, n_kv_heads, head_dim, hidden_dim, **kwargs):
         super().__init__(**kwargs)
         self.n_heads = n_heads
@@ -74,31 +64,14 @@ class LlamaBlock(Layer):
         super().build(input_shape)
 
     def forward(self, x, training=False, mask=None, kv_cache=None, layer_id=None):
-        # Residual 1
-        self.h1_norm = self.attention_norm(x, training)
-        self.attn_out = self.attention(self.h1_norm, mask=mask, training=training, kv_cache=kv_cache, layer_id=layer_id)
-        self.h = x + self.attn_out
-        
-        # Residual 2
-        self.h2_norm = self.ffn_norm(self.h, training)
-        self.ffn_out = self.feed_forward(self.h2_norm, training)
-        out = self.h + self.ffn_out
-        return out
+        h1_norm = self.attention_norm(x, training)
+        attn_out = self.attention(h1_norm, mask=mask, training=training, kv_cache=kv_cache, layer_id=layer_id)
+        h = x + attn_out
 
-    def backward(self, grad_output):
-        # Residual 2 backward
-        # out = h + ffn(norm(h))
-        grad_ffn_out = self.feed_forward.backward(grad_output)
-        grad_h2_norm = self.ffn_norm.backward(grad_ffn_out)
-        grad_h = grad_output + grad_h2_norm
-        
-        # Residual 1 backward
-        # h = x + attn(norm(x))
-        grad_attn_out = self.attention.backward(grad_h)
-        grad_h1_norm = self.attention_norm.backward(grad_attn_out)
-        grad_x = grad_h + grad_h1_norm
-        
-        return grad_x
+        h2_norm = self.ffn_norm(h, training)
+        ffn_out = self.feed_forward(h2_norm, training)
+        out = h + ffn_out
+        return out
 
 def LlamaTiny(vocab_size, seq_len, dim=512, n_layers=4, n_heads=8):
     """

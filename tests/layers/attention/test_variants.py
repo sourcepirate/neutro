@@ -8,14 +8,16 @@ def test_mqa():
     x = np.random.rand(2, 5, 16)
     out = layer(x)
     assert out.shape == (2, 5, 16)
-    assert layer.backward(np.random.rand(2, 5, 16)) is None
+    grad = layer.backward(np.random.rand(2, 5, 16))
+    assert grad.shape == (2, 5, 16)
 
 def test_gqa():
     layer = GroupedQueryAttention(num_heads=4, num_groups=2, key_dim=16)
     x = np.random.rand(2, 5, 16)
     out = layer(x)
     assert out.shape == (2, 5, 16)
-    assert layer.backward(np.random.rand(2, 5, 16)) is None
+    grad = layer.backward(np.random.rand(2, 5, 16))
+    assert grad.shape == (2, 5, 16)
 
 def test_mla():
     layer = MultiHeadLatentAttention(num_heads=4, head_dim=4, latent_dim=16, kv_latent_dim=8)

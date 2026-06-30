@@ -1,3 +1,5 @@
+from neutro.autograd import Tensor as AutogradTensor
+
 class Activation:
     def __call__(self, x):
         raise NotImplementedError

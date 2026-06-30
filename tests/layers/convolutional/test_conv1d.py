@@ -9,7 +9,7 @@ def test_conv1d_forward_valid():
     layer.build((batch, steps, channels))
     
     inputs = np.random.randn(batch, steps, channels)
-    out = layer.forward(inputs)
+    out = layer(inputs)
     
     # (10 - 3) // 1 + 1 = 8
     assert out.shape == (batch, 8, filters)
@@ -21,7 +21,7 @@ def test_conv1d_forward_same():
     layer.build((batch, steps, channels))
     
     inputs = np.random.randn(batch, steps, channels)
-    out = layer.forward(inputs)
+    out = layer(inputs)
     
     assert out.shape == (batch, 10, filters)
 
@@ -38,7 +38,7 @@ def test_conv1d_with_activation_backward():
     layer.build((batch, steps, channels))
     
     inputs = np.random.randn(batch, steps, channels)
-    out = layer.forward(inputs)
+    out = layer(inputs)
     assert out.shape == (batch, 10, filters)
     
     grad_output = np.random.randn(batch, 10, filters)

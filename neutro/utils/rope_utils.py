@@ -14,20 +14,25 @@ def precompute_freqs_cis(dim, seq_len, theta=10000.0):
 
 def apply_rotary_emb(x, freqs_cis):
     """
-    Apply RoPE to Query or Key tensors.
+    Apply RoPE to Query or Key tensors using real-valued rotation.
     x shape: (batch, n_heads, seq_len, head_dim)
     freqs_cis shape: (seq_len, head_dim // 2)
     """
-    # Reshape x to complex: (..., head_dim // 2, 2) -> (..., head_dim // 2)
-    x_complex = x.reshape(*x.shape[:-1], -1, 2)
-    x_complex = x_complex[..., 0] + 1j * x_complex[..., 1]
-    
-    # Broadcast freqs_cis: (seq_len, dim//2) -> (1, 1, seq_len, dim//2)
-    freqs_cis = freqs_cis[np.newaxis, np.newaxis, :, :]
-    
-    # Rotate
-    x_rotated = x_complex * freqs_cis
-    
-    # Convert back to real
-    x_out = np.stack([x_rotated.real, x_rotated.imag], axis=-1)
-    return x_out.reshape(*x.shape)
+    x_pairs = x.reshape(*x.shape[:-1], -1, 2)
+    x_even = x_pairs[..., 0]
+    x_odd = x_pairs[..., 1]
+
+    cos = freqs_cis.real
+    sin = freqs_cis.imag
+    cos = cos[np.newaxis, np.newaxis, :, :]
+    sin = sin[np.newaxis, np.newaxis, :, :]
+
+    out_even = x_even * cos - x_odd * sin
+    out_odd = x_even * sin + x_odd * cos
+
+    try:
+        from neutro.autograd.ops import concatenate
+        out = concatenate([out_even[..., None], out_odd[..., None]], axis=-1)
+    except ImportError:
+        out = np.stack([np.asarray(out_even), np.asarray(out_odd)], axis=-1)
+    return out.reshape(*x.shape)

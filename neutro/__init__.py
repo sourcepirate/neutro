@@ -6,4 +6,5 @@ from . import losses
 from . import optimizers
 from . import metrics
 from . import callbacks
+from . import autograd
 from .models import Sequential, Model
