@@ -149,7 +149,7 @@ def _capture_layer_state(layer):
         l = stack.pop()
         if id(l) in visited: continue
         visited.add(id(l))
-        sub = {k: v for k, v in l.__dict__.items()
+        sub = {k: copy.deepcopy(v) for k, v in l.__dict__.items()
                if k not in Model._STATE_EXCLUDE}
         state[id(l)] = sub
         for sl in l.sublayers:
@@ -157,16 +157,23 @@ def _capture_layer_state(layer):
     return state
 ```
 
-This recursively captures the `__dict__` of every sublayer, keyed by `id()`. Excluded keys (`params`, `grads`, `built`, `input_shape`, etc.) are persistent architectural attributes that should not be restored.
+This recursively captures the `__dict__` of every sublayer, keyed by `id()`. Values are **deep-copied** so that mutations during later forward passes (e.g. a shared layer used in multiple branches) cannot corrupt a previously captured snapshot. Excluded keys (`params`, `grads`, `built`, `input_shape`, etc.) are persistent architectural attributes that should not be restored.
 
 ### The `fit` Method
 
-Supports three input modes:
+`fit` and `autograd_fit` share a single training loop (`Model._fit_loop`). The only difference is the per-batch step:
+
+- **`fit`** (default) — uses manual backward passes (`layer.backward`) through the `Model.backward` graph traversal.
+- **`autograd_fit`** — uses the autograd engine: a `GradientTape` watches `trainable_params`, and gradients are produced by `tape.gradient(loss, params)`.
+
+Both are thin wrappers over `_fit_loop`, which supports three input modes:
 1. **Single array**: `fit(x, y)` — standard training.
 2. **List of arrays (MIMO)**: `fit([x1, x2], [y1, y2])` — multi-input, multi-output.
    - `is_mimo_x = isinstance(x, list)` detects list inputs.
    - For MIMO, batch slicing uses `[xi[start:end] for xi in x_shuffled]`.
 3. **Generator**: `fit(generator)` — yields `(x_batch, y_batch)` tuples.
+
+The per-batch logic lives in `Model._train_on_batch(x_batch, y_batch, use_autograd)`, which runs one forward/backward/optimizer step and returns the scalar batch loss plus the model output (used for metric reporting).
 
 Loss is summed across multiple outputs (matching Keras behavior): `batch_loss = sum(self.loss_fn(y_batch[j], output[j])`.
 

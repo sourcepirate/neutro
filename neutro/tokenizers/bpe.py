@@ -1,17 +1,23 @@
-import regex as re
 import base64
+import json
+
+import regex as re
+
 
 def get_stats(ids):
+    """Count the frequency of each adjacent pair of token ids."""
     counts = {}
     for pair in zip(ids, ids[1:]):
         counts[pair] = counts.get(pair, 0) + 1
     return counts
 
+
 def merge(ids, pair, idx):
+    """Replace every occurrence of `pair` in `ids` with the new token `idx`."""
     new_ids = []
     i = 0
     while i < len(ids):
-        if i < len(ids) - 1 and ids[i] == pair[0] and ids[i+1] == pair[1]:
+        if i < len(ids) - 1 and ids[i] == pair[0] and ids[i + 1] == pair[1]:
             new_ids.append(idx)
             i += 2
         else:
@@ -19,27 +25,24 @@ def merge(ids, pair, idx):
             i += 1
     return new_ids
 
+
 class BPETokenizer:
-    """
-    Minimal BPE Tokenizer implementation.
+    """Minimal BPE Tokenizer implementation.
+
     Educational and "intentionally naive".
     """
+
     def __init__(self):
         # byte -> id mapping
         self.encoder = {bytes([i]): i for i in range(256)}
         self.decoder = {i: bytes([i]) for i in range(256)}
-        self.special_tokens = {} # str -> int
-        self.inverse_special_tokens = {} # int -> str
+        self.special_tokens = {}  # str -> int
+        self.inverse_special_tokens = {}  # int -> str
 
-    def train(self, text, vocab_size, verbose=False):
+    def _train_loop(self, ids_list, vocab_size, verbose):
+        """Run the greedy BPE merge loop across a list of token-id sequences."""
         assert vocab_size >= 256
         num_merges = vocab_size - 256
-        
-        # text to bytes
-        byte_chunks = [text.encode("utf-8")]
-        
-        # We need to maintain a list of token ids for each chunk
-        ids_list = [list(chunk) for chunk in byte_chunks]
 
         for i in range(num_merges):
             stats = {}
@@ -48,20 +51,21 @@ class BPETokenizer:
                     stats[pair] = stats.get(pair, 0) + 1
             if not stats:
                 break
-            
+
             pair = max(stats, key=stats.get)
             idx = 256 + i
-            
-            # Update chunks
+
             ids_list = [merge(ids, pair, idx) for ids in ids_list]
-            
-            # Update vocab
+
             new_token_bytes = self.decoder[pair[0]] + self.decoder[pair[1]]
             self.encoder[new_token_bytes] = idx
             self.decoder[idx] = new_token_bytes
-            
+
             if verbose:
-                print(f"merge {i+1}/{num_merges}: {pair} -> {idx} had {stats[pair]} occurrences")
+                print(f"merge {i + 1}/{num_merges}: {pair} -> {idx} had {stats[pair]} occurrences")
+
+    def train(self, text, vocab_size, verbose=False):
+        self._train_loop([list(text.encode("utf-8"))], vocab_size, verbose)
 
     def encode(self, text):
         return self._encode_piece(text.encode("utf-8"))
@@ -70,20 +74,20 @@ class BPETokenizer:
         # Optimized BPE encoding using a list of token ids
         # Initially, each byte is a token
         ids = list(piece_bytes)
-        
+
         while len(ids) >= 2:
             # Find the pair that would be merged first (lowest rank in encoder)
             stats = get_stats(ids)
             pair = min(stats, key=lambda p: self.encoder.get(self.decoder[p[0]] + self.decoder[p[1]], float("inf")))
-            
+
             # If the best pair is not in our merges, we are done
             pair_bytes = self.decoder[pair[0]] + self.decoder[pair[1]]
             if pair_bytes not in self.encoder:
                 break
-                
+
             idx = self.encoder[pair_bytes]
             ids = merge(ids, pair, idx)
-            
+
         return ids
 
     def decode(self, ids):
@@ -97,10 +101,10 @@ class BPETokenizer:
                 raise ValueError(f"Invalid token id: {idx}")
         return b"".join(parts).decode("utf-8", errors="replace")
 
+
 class RegexTokenizer(BPETokenizer):
-    """
-    BPE Tokenizer with Regex splitting (GPT style).
-    """
+    """BPE Tokenizer with Regex splitting (GPT style)."""
+
     # GPT-4 split pattern
     GPT4_SPLIT_PATTERN = r"""'(?i:[sdmtre lve])| \?|\p{L}+|\p{N}+|[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
@@ -110,36 +114,9 @@ class RegexTokenizer(BPETokenizer):
         self.compiled_pattern = re.compile(self.pattern)
 
     def train(self, text, vocab_size, verbose=False):
-        assert vocab_size >= 256
-        num_merges = vocab_size - 256
-        
-        # split text into chunks
         chunks = self.compiled_pattern.findall(text)
-        # convert chunks to byte ids
         ids_list = [list(chunk.encode("utf-8")) for chunk in chunks]
-
-        for i in range(num_merges):
-            stats = {}
-            for ids in ids_list:
-                # get stats within each chunk
-                for pair in zip(ids, ids[1:]):
-                    stats[pair] = stats.get(pair, 0) + 1
-            
-            if not stats:
-                break
-            
-            pair = max(stats, key=stats.get)
-            idx = 256 + i
-            
-            # merge in all chunks
-            ids_list = [merge(ids, pair, idx) for ids in ids_list]
-            
-            new_token_bytes = self.decoder[pair[0]] + self.decoder[pair[1]]
-            self.encoder[new_token_bytes] = idx
-            self.decoder[idx] = new_token_bytes
-            
-            if verbose:
-                print(f"merge {i+1}/{num_merges}: {pair} -> {idx} had {stats[pair]} occurrences")
+        self._train_loop(ids_list, vocab_size, verbose)
 
     def register_special_tokens(self, special_tokens):
         # special_tokens: dict of str -> int
@@ -156,10 +133,10 @@ class RegexTokenizer(BPETokenizer):
 
         if not special_tokens:
             return self._encode_normal(text)
-        
+
         special_pattern = "(" + "|".join(re.escape(k) for k in special_tokens.keys()) + ")"
         parts = re.split(special_pattern, text)
-        
+
         ids = []
         for part in parts:
             if part in special_tokens:
@@ -176,7 +153,6 @@ class RegexTokenizer(BPETokenizer):
         return all_ids
 
     def save(self, prefix):
-        import json
         model = {
             "pattern": self.pattern,
             "encoder": {base64.b64encode(k).decode("ascii"): v for k, v in self.encoder.items()},
@@ -184,9 +160,8 @@ class RegexTokenizer(BPETokenizer):
         }
         with open(f"{prefix}.json", "w") as f:
             json.dump(model, f)
-            
+
     def load(self, prefix):
-        import json
         with open(f"{prefix}.json", "r") as f:
             model = json.load(f)
         self.pattern = model["pattern"]
@@ -199,4 +174,3 @@ class RegexTokenizer(BPETokenizer):
     @property
     def vocab_size(self):
         return len(self.encoder) + len(self.special_tokens)
-

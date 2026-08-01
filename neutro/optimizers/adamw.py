@@ -1,45 +1,22 @@
-import numpy as np
-from .base import Optimizer
-from neutro.autograd import Tensor
+from .adam import Adam, _get_data
+
+DEFAULT_WEIGHT_DECAY = 0.01
 
 
-def _get_data(p):
-    return p.data if isinstance(p, Tensor) else p
+class AdamW(Adam):
+    """Adam with decoupled weight decay.
 
+    The weight decay is applied directly to the parameter *before* the
+    moment updates, decoupled from the gradient (Loshchilov & Hutter, 2019).
+    """
 
-class AdamW(Optimizer):
-    def __init__(self, learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-7, weight_decay=0.01):
-        super().__init__(learning_rate)
-        self.beta_1 = beta_1
-        self.beta_2 = beta_2
-        self.epsilon = epsilon
+    def __init__(self, learning_rate=0.001, beta_1=0.9, beta_2=0.999,
+                 epsilon=1e-7, weight_decay=DEFAULT_WEIGHT_DECAY):
+        super().__init__(learning_rate=learning_rate, beta_1=beta_1,
+                         beta_2=beta_2, epsilon=epsilon)
         self.weight_decay = weight_decay
-        self.m = {}
-        self.v = {}
-        self.t = 0
 
-    def step(self, layers):
-        self.t += 1
-        for layer in layers:
-            if not getattr(layer, 'trainable', True):
-                continue
-            for param_name, param_value in layer.params.items():
-                grad = param_value.grad if isinstance(param_value, Tensor) and param_value.grad is not None else layer.grads.get(param_name)
-                if grad is None:
-                    continue
-                param_data = _get_data(param_value)
-                key = (id(layer), param_name)
-
-                if key not in self.m:
-                    self.m[key] = np.zeros_like(param_data)
-                    self.v[key] = np.zeros_like(param_data)
-
-                param_data -= self.learning_rate * self.weight_decay * param_data
-
-                self.m[key] = self.beta_1 * self.m[key] + (1 - self.beta_1) * grad
-                self.v[key] = self.beta_2 * self.v[key] + (1 - self.beta_2) * (grad**2)
-
-                m_hat = self.m[key] / (1 - self.beta_1**self.t)
-                v_hat = self.v[key] / (1 - self.beta_2**self.t)
-
-                param_data -= self.learning_rate * m_hat / (np.sqrt(v_hat) + self.epsilon)
+    def _apply_step(self, layer, param_name, param_value, grad):
+        param_data = _get_data(param_value)
+        param_data -= self.learning_rate * self.weight_decay * param_data
+        super()._apply_step(layer, param_name, param_value, grad)
