@@ -1,15 +1,14 @@
 import base64
+import itertools
 import json
+from collections import Counter
 
 import regex as re
 
 
 def get_stats(ids):
     """Count the frequency of each adjacent pair of token ids."""
-    counts = {}
-    for pair in zip(ids, ids[1:]):
-        counts[pair] = counts.get(pair, 0) + 1
-    return counts
+    return Counter(itertools.pairwise(ids))
 
 
 def merge(ids, pair, idx):
@@ -45,10 +44,8 @@ class BPETokenizer:
         num_merges = vocab_size - 256
 
         for i in range(num_merges):
-            stats = {}
-            for ids in ids_list:
-                for pair in zip(ids, ids[1:]):
-                    stats[pair] = stats.get(pair, 0) + 1
+            stats = Counter(itertools.chain.from_iterable(
+                itertools.pairwise(ids) for ids in ids_list))
             if not stats:
                 break
 
@@ -110,7 +107,7 @@ class RegexTokenizer(BPETokenizer):
 
     def __init__(self, pattern=None):
         super().__init__()
-        self.pattern = pattern if pattern else self.GPT4_SPLIT_PATTERN
+        self.pattern = pattern or self.GPT4_SPLIT_PATTERN
         self.compiled_pattern = re.compile(self.pattern)
 
     def train(self, text, vocab_size, verbose=False):

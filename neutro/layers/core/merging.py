@@ -1,3 +1,5 @@
+from functools import reduce
+
 from ..base import Layer
 from neutro.autograd import Tensor
 from neutro.autograd import ops as autograd_ops
@@ -33,10 +35,7 @@ class _ReduceBase(Layer):
     def forward(self, inputs, training=False):
         if not isinstance(inputs, list):
             return inputs
-        result = _to_tensor(inputs[0])
-        for other in inputs[1:]:
-            result = self._combine(result, _to_tensor(other))
-        return result
+        return reduce(self._combine, map(_to_tensor, inputs))
 
 
 class Add(_ReduceBase):

@@ -51,11 +51,7 @@ class MonitorCallback(Callback):
         if self.mode == 'max':
             return current > self.best
         # auto: infer direction from the monitored metric's name
-        if 'acc' in self.monitor:
-            return current > self.best
-        if 'loss' in self.monitor:
-            return current < self.best
-        return current < self.best
+        return current > self.best if 'acc' in self.monitor else current < self.best
 
     def _init_best(self) -> float:
         maximize = self.mode == 'max' or (self.mode == 'auto' and 'acc' in self.monitor)

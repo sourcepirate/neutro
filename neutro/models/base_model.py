@@ -1,3 +1,6 @@
+import copy
+import inspect
+
 import numpy as np
 import joblib
 from tqdm import tqdm
@@ -6,6 +9,19 @@ from .. import losses as losses_module
 from ..callbacks import History
 
 from ..layers.base import Layer
+
+
+def _iter_layer_tree(root):
+    """Yield each layer in `root`'s layer tree exactly once, cycle-safe."""
+    stack = [root]
+    seen = set()
+    while stack:
+        layer = stack.pop()
+        if id(layer) in seen:
+            continue
+        seen.add(id(layer))
+        yield layer
+        stack.extend(reversed(layer.sublayers))
 
 
 class Model(Layer):
@@ -69,20 +85,18 @@ class Model(Layer):
         self.metrics = [metrics_module.get(m) for m in (metrics or [])]
 
     def _get_all_layers(self, layers=None, visited=None):
-        if layers is None:
-            layers = self.layers
-        if visited is None:
-            visited = set()
-
-        all_layers = []
-        for layer in layers:
-            l_id = id(layer)
-            if l_id not in visited:
-                visited.add(l_id)
-                all_layers.append(layer)
-                if hasattr(layer, 'sublayers'):
-                    all_layers.extend(self._get_all_layers(layer.sublayers, visited))
-        return all_layers
+        roots = self.layers if layers is None else layers
+        seen = set() if visited is None else visited
+        stack = list(reversed(roots))
+        result = []
+        while stack:
+            layer = stack.pop()
+            if id(layer) in seen:
+                continue
+            seen.add(id(layer))
+            result.append(layer)
+            stack.extend(reversed(layer.sublayers))
+        return result
 
     _STATE_EXCLUDE = {'params', 'grads', 'built', 'input_shape', 'output_shape',
                       'name', '_inbound_nodes', 'trainable'}
@@ -97,69 +111,28 @@ class Model(Layer):
 
         Returns dict: {id(sublayer): {attr_name: value, ...}}
         """
-        import copy
-
-        state = {}
-        stack = [layer]
-        visited = set()
-        while stack:
-            l = stack.pop()
-            l_id = id(l)
-            if l_id in visited:
-                continue
-            visited.add(l_id)
-            sub = {}
-            for k, v in l.__dict__.items():
-                if k not in Model._STATE_EXCLUDE:
-                    sub[k] = copy.deepcopy(v)
-            state[l_id] = sub
-            for sl in l.sublayers:
-                stack.append(sl)
-        return state
+        return {
+            id(l): {k: copy.deepcopy(v) for k, v in l.__dict__.items()
+                    if k not in Model._STATE_EXCLUDE}
+            for l in _iter_layer_tree(layer)
+        }
 
     @staticmethod
     def _restore_layer_state(layer, state):
         """Restore state captured by _capture_layer_state onto layer tree."""
-        stack = [layer]
-        visited = set()
-        while stack:
-            l = stack.pop()
-            l_id = id(l)
-            if l_id in visited:
-                continue
-            visited.add(l_id)
-            if l_id in state:
-                for k, v in state[l_id].items():
-                    setattr(l, k, v)
-            for sl in l.sublayers:
-                stack.append(sl)
+        for l in _iter_layer_tree(layer):
+            for k, v in state.get(id(l), {}).items():
+                setattr(l, k, v)
 
     @staticmethod
     def _clear_layer_grads(layer):
-        stack = [layer]
-        visited = set()
-        while stack:
-            l = stack.pop()
-            l_id = id(l)
-            if l_id in visited:
-                continue
-            visited.add(l_id)
+        for l in _iter_layer_tree(layer):
             l.grads = {}
-            for sl in l.sublayers:
-                stack.append(sl)
 
     @staticmethod
     def _accumulate_layer_grads(layer, grads_accumulator):
-        stack = [layer]
-        visited = set()
-        while stack:
-            l = stack.pop()
-            l_id = id(l)
-            if l_id in visited:
-                continue
-            visited.add(l_id)
-
-            layer_acc = grads_accumulator.setdefault(l_id, {})
+        for l in _iter_layer_tree(layer):
+            layer_acc = grads_accumulator.setdefault(id(l), {})
             for k, v in l.grads.items():
                 if k in layer_acc:
                     layer_acc[k] += v
@@ -167,8 +140,26 @@ class Model(Layer):
                     layer_acc[k] = np.array(v, copy=True)
             l.grads = layer_acc
 
-            for sl in l.sublayers:
-                stack.append(sl)
+    @staticmethod
+    def _is_mimo(outputs):
+        return isinstance(outputs, list)
+
+    def _compute_loss(self, y, output):
+        if self._is_mimo(self.outputs):
+            return sum(self.loss_fn(y[j], output[j]) for j in range(len(self.outputs)))
+        return self.loss_fn(y, output)
+
+    @staticmethod
+    def _eval_metric(metric, y, output, is_mimo_out):
+        try:
+            return metric(y, output)
+        except (TypeError, ValueError):
+            return metric(y[0], output[0]) if is_mimo_out else 0.0
+
+    def _metric_summary(self, logs, prefix=''):
+        return ''.join(
+            f" - {prefix}{m.get_name()}: {logs[f'{prefix}{m.get_name()}']:.4f}"
+            for m in self.metrics)
 
     def fit(self, x, y=None, epochs=1, batch_size=32, verbose=1, validation_data=None, callbacks=None):
         """Train the model using manual backward passes (layer.backward)."""
@@ -266,10 +257,7 @@ class Model(Layer):
                 epoch_loss += batch_loss * batch_size_actual
 
                 for m in self.metrics:
-                    try:
-                        m_val = m(y_batch, output)
-                    except (TypeError, ValueError):
-                        m_val = m(y_batch[0], output[0]) if isinstance(self.outputs, list) else 0.0
+                    m_val = self._eval_metric(m, y_batch, output, self._is_mimo(self.outputs))
                     epoch_metrics[m.get_name()] += m_val * batch_size_actual
 
                 for cb in all_callbacks:
@@ -300,21 +288,13 @@ class Model(Layer):
             if verbose:
                 if verbose == 1:
                     if validation_data:
-                        val_msg = f" - val_loss: {logs['val_loss']:.4f}"
-                        for m in self.metrics:
-                            name = m.get_name()
-                            val_msg += f" - val_{name}: {logs[f'val_{name}']:.4f}"
-                        print(val_msg)
+                        print(f" - val_loss: {logs['val_loss']:.4f}"
+                              + self._metric_summary(logs, 'val_'))
                 else:
-                    msg = f"Epoch {epoch + 1}/{epochs} - loss: {logs['loss']:.4f}"
-                    for m in self.metrics:
-                        name = m.get_name()
-                        msg += f" - {name}: {logs[name]:.4f}"
+                    msg = (f"Epoch {epoch + 1}/{epochs} - loss: {logs['loss']:.4f}"
+                           + self._metric_summary(logs))
                     if validation_data:
-                        msg += f" - val_loss: {logs['val_loss']:.4f}"
-                        for m in self.metrics:
-                            name = m.get_name()
-                            msg += f" - val_{name}: {logs[f'val_{name}']:.4f}"
+                        msg += f" - val_loss: {logs['val_loss']:.4f}" + self._metric_summary(logs, 'val_')
                     print(msg)
 
         for cb in all_callbacks:
@@ -348,11 +328,8 @@ class Model(Layer):
         else:
             output = self.forward(x_batch, training=True)
 
-            is_mimo_out = isinstance(self.outputs, list)
-            if is_mimo_out:
-                batch_loss = sum(self.loss_fn(y_batch[j], output[j]) for j in range(len(self.outputs)))
-            else:
-                batch_loss = self.loss_fn(y_batch, output)
+            is_mimo_out = self._is_mimo(self.outputs)
+            batch_loss = self._compute_loss(y_batch, output)
 
             if is_mimo_out:
                 grads = [self.loss_fn.gradient(y_batch[j], output[j]) for j in range(len(self.outputs))]
@@ -370,16 +347,10 @@ class Model(Layer):
         """Evaluate on validation data and write results into `logs`."""
         val_x, val_y = validation_data
         val_output = self.predict(val_x)
-        is_mimo_val_out = isinstance(self.outputs, list)
-        if is_mimo_val_out:
-            logs['val_loss'] = sum(self.loss_fn(val_y[j], val_output[j]) for j in range(len(self.outputs)))
-        else:
-            logs['val_loss'] = self.loss_fn(val_y, val_output)
+        is_mimo_val_out = self._is_mimo(self.outputs)
+        logs['val_loss'] = self._compute_loss(val_y, val_output)
         for m in self.metrics:
-            try:
-                m_val = m(val_y, val_output)
-            except (TypeError, ValueError):
-                m_val = m(val_y[0], val_output[0]) if is_mimo_val_out else 0.0
+            m_val = self._eval_metric(m, val_y, val_output, is_mimo_val_out)
             logs[f'val_{m.get_name()}'] = m_val
 
     @property
@@ -443,14 +414,9 @@ class Model(Layer):
 
         # Sequential or Subclassed forward pass
         for i, layer in enumerate(self.layers):
-            if kv_cache is not None and hasattr(layer, 'forward'):
-                # Check if layer accepts kv_cache (Attention or Blocks)
-                import inspect
-                sig = inspect.signature(layer.forward)
-                if 'kv_cache' in sig.parameters:
-                    inputs = layer(inputs, training=training, kv_cache=kv_cache, layer_id=i)
-                else:
-                    inputs = layer(inputs, training=training)
+            if kv_cache is not None and 'kv_cache' in inspect.signature(layer.forward).parameters:
+                # Layer accepts kv_cache (Attention or Blocks)
+                inputs = layer(inputs, training=training, kv_cache=kv_cache, layer_id=i)
             else:
                 inputs = layer(inputs, training=training)
         return inputs
@@ -602,18 +568,12 @@ class Model(Layer):
         return float(v)
 
     def evaluate(self, x, y):
-        is_mimo_out = isinstance(self.outputs, list)
+        is_mimo_out = self._is_mimo(self.outputs)
         output = self.predict(x)
-        if is_mimo_out:
-            loss = sum(self.loss_fn(y[j], output[j]) for j in range(len(self.outputs)))
-        else:
-            loss = self.loss_fn(y, output)
+        loss = self._compute_loss(y, output)
         results = {'loss': self._to_scalar(loss)}
         for m in self.metrics:
-            try:
-                m_val = m(y, output)
-            except (TypeError, ValueError):
-                m_val = m(y[0], output[0]) if is_mimo_out else 0.0
+            m_val = self._eval_metric(m, y, output, is_mimo_out)
             results[m.get_name()] = self._to_scalar(m_val) if not isinstance(m_val, float) else m_val
         return results
 
@@ -674,9 +634,9 @@ class Model(Layer):
                                 connected_to.append(node.input_tensors.node.layer.name or node.input_tensors.node.layer.__class__.__name__)
 
                 connected_str = ", ".join(connected_to) if connected_to else ""
-                print(f"{name + ' (' + layer_type + ')':<25} {str(output_shape):<20} {params:<10,} {connected_str:<25}")
+                print(f"{f'{name} ({layer_type})':<25} {output_shape!s:<20} {params:<10,} {connected_str:<25}")
             else:
-                print(f"{name + ' (' + layer_type + ')':<25} {str(output_shape):<20} {params:<10,}")
+                print(f"{f'{name} ({layer_type})':<25} {output_shape!s:<20} {params:<10,}")
 
         print("=" * 85)
         print(f"Total params: {total_params:,}")

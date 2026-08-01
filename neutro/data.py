@@ -34,10 +34,7 @@ class DataLoader:
         batch_x, batch_y = self.x[indices], self.y[indices]
 
         if self.augmenter:
-            augmented_x = np.zeros_like(batch_x)
-            for i in range(len(batch_x)):
-                augmented_x[i] = self.augmenter.apply_transform(batch_x[i])
-            batch_x = augmented_x
+            batch_x = np.stack([self.augmenter.apply_transform(xi) for xi in batch_x])
 
         return batch_x, batch_y
 

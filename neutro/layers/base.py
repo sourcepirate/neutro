@@ -46,21 +46,16 @@ class Layer:
     def count_params(self):
         """Count the total number of parameters in this layer and its sublayers."""
         from neutro.autograd import Tensor as AutoTensor
-        count = 0
-        for p in self.params.values():
-            count += p.data.size if isinstance(p, AutoTensor) else p.size
-        for layer in self.sublayers:
-            count += layer.count_params()
-        return count
+        own = sum(p.data.size if isinstance(p, AutoTensor) else p.size
+                  for p in self.params.values())
+        return own + sum(layer.count_params() for layer in self.sublayers)
 
     def compute_output_shape(self, input_shape):
         """Compute the output shape of the layer.
 
         Should be overridden by subclasses that transform the input shape.
         """
-        if hasattr(self, 'output_shape') and self.output_shape is not None:
-            return self.output_shape
-        return input_shape
+        return self.output_shape if self.output_shape is not None else input_shape
 
     def _collect_tensor_params(self):
         """Gather all autograd Tensor parameters across the layer tree."""
@@ -133,9 +128,8 @@ class Layer:
     def _is_symbolic_input(self, inputs):
         from ..engine.node import KerasTensor
 
-        if isinstance(inputs, KerasTensor):
-            return True
-        return (isinstance(inputs, list)
+        return (isinstance(inputs, KerasTensor)
+                or isinstance(inputs, list)
                 and any(isinstance(i, KerasTensor) for i in inputs))
 
     def _symbolic_call(self, inputs):

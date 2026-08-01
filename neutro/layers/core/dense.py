@@ -27,7 +27,7 @@ class Dense(Layer):
         super().build(input_shape)
 
     def compute_output_shape(self, input_shape):
-        return tuple(list(input_shape)[:-1] + [self.units])
+        return (*input_shape[:-1], self.units)
 
     def forward(self, inputs, training=False):
         z = inputs @ self.params['W']
