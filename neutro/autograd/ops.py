@@ -1,7 +1,6 @@
 import numpy as np
 from .tensor import Tensor
-from .tape import get_active_tape
-from .utils import broadcast_backward
+from .function import Function
 
 
 def _ensure_tensor(x):
@@ -10,423 +9,476 @@ def _ensure_tensor(x):
     return Tensor(x)
 
 
+class _Add(Function):
+    @staticmethod
+    def forward(ctx, a, b):
+        ctx.save_for_backward(a=a, b=b)
+        return a + b
+
+    @staticmethod
+    def backward(ctx, g):
+        a, b = ctx.saved_data['a'], ctx.saved_data['b']
+        return g, g
+
+
+class _Sub(Function):
+    @staticmethod
+    def forward(ctx, a, b):
+        ctx.save_for_backward(a=a, b=b)
+        return a - b
+
+    @staticmethod
+    def backward(ctx, g):
+        return g, -g
+
+
+class _Mul(Function):
+    @staticmethod
+    def forward(ctx, a, b):
+        ctx.save_for_backward(a=a, b=b)
+        return a * b
+
+    @staticmethod
+    def backward(ctx, g):
+        a, b = ctx.saved_data['a'], ctx.saved_data['b']
+        return g * b, g * a
+
+
+class _Div(Function):
+    @staticmethod
+    def forward(ctx, a, b):
+        ctx.save_for_backward(a=a, b=b)
+        return a / b
+
+    @staticmethod
+    def backward(ctx, g):
+        a, b = ctx.saved_data['a'], ctx.saved_data['b']
+        return g / b, -g * a / (b ** 2)
+
+
+class _Neg(Function):
+    @staticmethod
+    def forward(ctx, x):
+        return -x
+
+    @staticmethod
+    def backward(ctx, g):
+        return -g
+
+
+class _Pow(Function):
+    @staticmethod
+    def forward(ctx, x, k):
+        ctx.save_for_backward(x=x, k=k)
+        return x ** k
+
+    @staticmethod
+    def backward(ctx, g):
+        x, k = ctx.saved_data['x'], ctx.saved_data['k']
+        return k * (x ** (k - 1)) * g
+
+
+class _Matmul(Function):
+    @staticmethod
+    def forward(ctx, a, b):
+        ctx.save_for_backward(a=a, b=b)
+        return a @ b
+
+    @staticmethod
+    def backward(ctx, g):
+        a, b = ctx.saved_data['a'], ctx.saved_data['b']
+        ga = g @ b.T if g.ndim == 2 and b.ndim == 2 else g @ np.swapaxes(b, -1, -2)
+        gb = a.T @ g if g.ndim == 2 and a.ndim == 2 else np.swapaxes(a, -1, -2) @ g
+        return ga, gb
+
+
+class _Sum(Function):
+    @staticmethod
+    def forward(ctx, x, axis, keepdims):
+        ctx.save_for_backward(x_shape=x.shape, axis=axis, keepdims=keepdims)
+        return np.sum(x, axis=axis, keepdims=keepdims)
+
+    @staticmethod
+    def backward(ctx, g):
+        x_shape, axis, keepdims = ctx.saved_data['x_shape'], ctx.saved_data['axis'], ctx.saved_data['keepdims']
+        if axis is None:
+            gx = g * np.ones(x_shape, dtype=float)
+        else:
+            gx = np.expand_dims(g, axis=axis) if not keepdims else g
+            gx = gx * np.ones(x_shape, dtype=float)
+        return gx.reshape(x_shape)
+
+
+class _Mean(Function):
+    @staticmethod
+    def forward(ctx, x, axis, keepdims):
+        if axis is None:
+            n = x.size
+        else:
+            axes = (axis,) if isinstance(axis, int) else axis
+            n = int(np.prod([x.shape[d] for d in axes]))
+        ctx.save_for_backward(x_shape=x.shape, axis=axis, keepdims=keepdims, n=n)
+        return np.mean(x, axis=axis, keepdims=keepdims)
+
+    @staticmethod
+    def backward(ctx, g):
+        x_shape, axis, keepdims, n = ctx.saved_data['x_shape'], ctx.saved_data['axis'], ctx.saved_data['keepdims'], ctx.saved_data['n']
+        if axis is None:
+            gx = g * np.ones(x_shape, dtype=float) / n
+        else:
+            gx = np.expand_dims(g, axis=axis) if not keepdims else g
+            gx = gx * np.ones(x_shape, dtype=float) / n
+        return gx.reshape(x_shape)
+
+
+class _Transpose(Function):
+    @staticmethod
+    def forward(ctx, x, axes):
+        if axes is None:
+            axes = tuple(range(x.ndim - 1, -1, -1))
+        ctx.save_for_backward(inv_axes=tuple(np.argsort(axes)))
+        return np.transpose(x, axes)
+
+    @staticmethod
+    def backward(ctx, g):
+        return np.transpose(g, ctx.saved_data['inv_axes'])
+
+
+class _Reshape(Function):
+    @staticmethod
+    def forward(ctx, x, shape):
+        ctx.save_for_backward(x_shape=x.shape)
+        return x.reshape(shape)
+
+    @staticmethod
+    def backward(ctx, g):
+        return g.reshape(ctx.saved_data['x_shape'])
+
+
+class _Slice(Function):
+    @staticmethod
+    def forward(ctx, x, idx):
+        ctx.save_for_backward(x=x, idx=idx)
+        return x[idx]
+
+    @staticmethod
+    def backward(ctx, g):
+        full = np.zeros_like(ctx.saved_data['x'])
+        full[ctx.saved_data['idx']] += g
+        return full
+
+
+class _Relu(Function):
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x=x)
+        return np.maximum(0, x)
+
+    @staticmethod
+    def backward(ctx, g):
+        return g * (ctx.saved_data['x'] > 0).astype(float)
+
+
+class _Sigmoid(Function):
+    @staticmethod
+    def forward(ctx, x):
+        s = 1.0 / (1.0 + np.exp(-np.clip(x, -500, 500)))
+        ctx.save_for_backward(s=s.copy())
+        return s.copy()
+
+    @staticmethod
+    def backward(ctx, g):
+        s = ctx.saved_data['s']
+        return g * s * (1.0 - s)
+
+
+class _Tanh(Function):
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x=x)
+        return np.tanh(x)
+
+    @staticmethod
+    def backward(ctx, g):
+        t = np.tanh(ctx.saved_data['x'])
+        return g * (1.0 - t ** 2)
+
+
+class _Silu(Function):
+    @staticmethod
+    def forward(ctx, x):
+        s = 1.0 / (1.0 + np.exp(-np.clip(x, -500, 500)))
+        ctx.save_for_backward(x=x, s=s.copy())
+        return x * s
+
+    @staticmethod
+    def backward(ctx, g):
+        x, s = ctx.saved_data['x'], ctx.saved_data['s']
+        return g * (s + x * s * (1.0 - s))
+
+
+class _Softmax(Function):
+    @staticmethod
+    def forward(ctx, x, axis):
+        x_max = np.max(x, axis=axis, keepdims=True)
+        exps = np.exp(x - x_max)
+        s = exps / np.sum(exps, axis=axis, keepdims=True)
+        ctx.save_for_backward(s=s.copy(), axis=axis)
+        return s.copy()
+
+    @staticmethod
+    def backward(ctx, g):
+        s, axis = ctx.saved_data['s'], ctx.saved_data['axis']
+        dot = np.sum(s * g, axis=axis, keepdims=True)
+        return s * (g - dot)
+
+
+class _Sqrt(Function):
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x=x)
+        return np.sqrt(x)
+
+    @staticmethod
+    def backward(ctx, g):
+        return g / (2.0 * np.sqrt(ctx.saved_data['x']) + 1e-15)
+
+
+class _Exp(Function):
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x=x)
+        return np.exp(x)
+
+    @staticmethod
+    def backward(ctx, g):
+        return g * np.exp(ctx.saved_data['x'])
+
+
+class _Log(Function):
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x=x)
+        return np.log(x + 1e-15)
+
+    @staticmethod
+    def backward(ctx, g):
+        return g / (ctx.saved_data['x'] + 1e-15)
+
+
+class _Max(Function):
+    @staticmethod
+    def forward(ctx, x, axis, keepdims):
+        ctx.save_for_backward(x=x, axis=axis, keepdims=keepdims)
+        return np.max(x, axis=axis, keepdims=keepdims)
+
+    @staticmethod
+    def backward(ctx, g):
+        x, axis, keepdims = ctx.saved_data['x'], ctx.saved_data['axis'], ctx.saved_data['keepdims']
+        mask = (x == np.max(x, axis=axis, keepdims=True)).astype(float)
+        s = mask.sum(axis=axis, keepdims=True) if axis is not None else mask.sum()
+        s = np.clip(s, 1e-15, None)
+        mask = mask / s
+        if axis is None:
+            gx = g * mask
+        else:
+            gx = np.expand_dims(g, axis=axis) if not keepdims else g
+            gx = gx * mask
+        return gx.reshape(x.shape)
+
+
+class _Concatenate(Function):
+    @staticmethod
+    def forward(ctx, axis, *tensors):
+        ctx.save_for_backward(axis=axis, splits=tuple(t.shape[axis] for t in tensors))
+        return np.concatenate(tensors, axis=axis)
+
+    @staticmethod
+    def backward(ctx, g):
+        axis = ctx.saved_data['axis']
+        splits = ctx.saved_data['splits']
+        return tuple(np.split(g, np.cumsum(splits[:-1]), axis=axis))
+
+
+class _Tile(Function):
+    @staticmethod
+    def forward(ctx, x, reps):
+        ctx.save_for_backward(x_shape=x.shape, reps=reps)
+        return np.tile(x, reps)
+
+    @staticmethod
+    def backward(ctx, g):
+        x_shape, reps = ctx.saved_data['x_shape'], ctx.saved_data['reps']
+        for ax, r in enumerate(reps):
+            if r > 1:
+                g = np.add.reduceat(g, np.arange(0, g.shape[ax], r), axis=ax)
+        return g.reshape(x_shape)
+
+
+class _Clip(Function):
+    @staticmethod
+    def forward(ctx, x, a, b):
+        ctx.save_for_backward(x=x, a=a, b=b)
+        return np.clip(x, a, b)
+
+    @staticmethod
+    def backward(ctx, g):
+        x, a, b = ctx.saved_data['x'], ctx.saved_data['a'], ctx.saved_data['b']
+        return g * ((x >= a) & (x <= b)).astype(float)
+
+
+class _Abs(Function):
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x=x)
+        return np.abs(x)
+
+    @staticmethod
+    def backward(ctx, g):
+        return g * np.sign(ctx.saved_data['x'] + 1e-15)
+
+
+class _Repeat(Function):
+    @staticmethod
+    def forward(ctx, x, repeats, axis):
+        ctx.save_for_backward(x_shape=x.shape, repeats=repeats, axis=axis)
+        return np.repeat(x, repeats, axis=axis)
+
+    @staticmethod
+    def backward(ctx, g):
+        x_shape, repeats, axis = ctx.saved_data['x_shape'], ctx.saved_data['repeats'], ctx.saved_data['axis']
+        shape = list(g.shape)
+        shape.insert(axis + 1, repeats)
+        shape[axis] = x_shape[axis]
+        return g.reshape(shape).sum(axis=axis + 1)
+
+
+class _Maximum(Function):
+    @staticmethod
+    def forward(ctx, a, b):
+        ctx.save_for_backward(a=a, b=b)
+        return np.maximum(a, b)
+
+    @staticmethod
+    def backward(ctx, g):
+        a, b = ctx.saved_data['a'], ctx.saved_data['b']
+        mask = (a >= b).astype(float)
+        return g * mask, g * (1.0 - mask)
+
+
 def add(a, b):
-    a, b = _ensure_tensor(a), _ensure_tensor(b)
-    out = a.data + b.data
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and (id(a) in tape._watched or id(b) in tape._watched):
-        a_shape, b_shape = a.shape, b.shape
-        def bw(g):
-            return [broadcast_backward(g, a_shape),
-                    broadcast_backward(g, b_shape)]
-        tape._record_op([a, b], result, bw, 'add')
-    return result
+    return _Add.apply(_ensure_tensor(a), _ensure_tensor(b))
 
 
 def sub(a, b):
-    a, b = _ensure_tensor(a), _ensure_tensor(b)
-    out = a.data - b.data
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and (id(a) in tape._watched or id(b) in tape._watched):
-        a_shape, b_shape = a.shape, b.shape
-        def bw(g):
-            return [broadcast_backward(g, a_shape),
-                    broadcast_backward(-g, b_shape)]
-        tape._record_op([a, b], result, bw, 'sub')
-    return result
+    return _Sub.apply(_ensure_tensor(a), _ensure_tensor(b))
 
 
 def mul(a, b):
-    a, b = _ensure_tensor(a), _ensure_tensor(b)
-    out = a.data * b.data
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and (id(a) in tape._watched or id(b) in tape._watched):
-        a_shape, b_shape = a.shape, b.shape
-        def bw(g):
-            ga = broadcast_backward(g * b.data, a_shape) if id(a) in tape._watched else None
-            gb = broadcast_backward(g * a.data, b_shape) if id(b) in tape._watched else None
-            return [ga, gb]
-        tape._record_op([a, b], result, bw, 'mul')
-    return result
+    return _Mul.apply(_ensure_tensor(a), _ensure_tensor(b))
 
 
 def div(a, b):
-    a, b = _ensure_tensor(a), _ensure_tensor(b)
-    out = a.data / b.data
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and (id(a) in tape._watched or id(b) in tape._watched):
-        a_shape, b_shape = a.shape, b.shape
-        def bw(g):
-            ga = broadcast_backward(g / b.data, a_shape) if id(a) in tape._watched else None
-            gb = broadcast_backward(-g * a.data / (b.data ** 2), b_shape) if id(b) in tape._watched else None
-            return [ga, gb]
-        tape._record_op([a, b], result, bw, 'div')
-    return result
+    return _Div.apply(_ensure_tensor(a), _ensure_tensor(b))
 
 
 def neg(x):
-    x = _ensure_tensor(x)
-    out = -x.data
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        def bw(g):
-            return [-g]
-        tape._record_op([x], result, bw, 'neg')
-    return result
+    return _Neg.apply(_ensure_tensor(x))
 
 
 def _pow(x, power):
-    x = _ensure_tensor(x)
     if not isinstance(power, (int, float)):
         raise ValueError("_pow only supports constant scalar exponent")
-    out = x.data ** power
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        k = power
-        def bw(g):
-            return [(k * (x.data ** (k - 1)) * g)]
-        tape._record_op([x], result, bw, 'pow')
-    return result
+    return _Pow.apply(_ensure_tensor(x), power)
 
 
 def matmul(a, b):
-    a, b = _ensure_tensor(a), _ensure_tensor(b)
-    out = a.data @ b.data
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and (id(a) in tape._watched or id(b) in tape._watched):
-        a_shape, b_shape = a.shape, b.shape
-        def bw(g):
-            ga = None
-            if id(a) in tape._watched:
-                if g.ndim == 2 and b.data.ndim == 2:
-                    ga = g @ b.data.T
-                else:
-                    ga = g @ np.swapaxes(b.data, -1, -2)
-                ga = broadcast_backward(ga, a_shape)
-            gb = None
-            if id(b) in tape._watched:
-                if g.ndim == 2 and a.data.ndim == 2:
-                    gb = a.data.T @ g
-                else:
-                    gb = np.swapaxes(a.data, -1, -2) @ g
-                gb = broadcast_backward(gb, b_shape)
-            return [ga, gb]
-        tape._record_op([a, b], result, bw, 'matmul')
-    return result
+    return _Matmul.apply(_ensure_tensor(a), _ensure_tensor(b))
 
 
 def _sum(x, axis=None, keepdims=False):
-    x = _ensure_tensor(x)
-    out = np.sum(x.data, axis=axis, keepdims=keepdims)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        x_shape = x.shape
-        ax = axis
-        def bw(g):
-            if ax is None:
-                gx = g * np.ones(x_shape, dtype=float)
-            else:
-                gx = np.expand_dims(g, axis=ax) if not keepdims else g
-                gx = gx * np.ones(x_shape, dtype=float)
-            return [gx.reshape(x_shape)]
-        tape._record_op([x], result, bw, 'sum')
-    return result
+    return _Sum.apply(_ensure_tensor(x), axis=axis, keepdims=keepdims)
 
 
 def _mean(x, axis=None, keepdims=False):
-    x = _ensure_tensor(x)
-    out = np.mean(x.data, axis=axis, keepdims=keepdims)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        x_shape = x.shape
-        ax = axis
-        if ax is None:
-            n = x.data.size
-        else:
-            ax_t = (ax,) if isinstance(ax, int) else ax
-            n = int(np.prod([x_shape[d] for d in ax_t]))
-        def bw(g):
-            if ax is None:
-                gx = g * np.ones(x_shape, dtype=float) / n
-            else:
-                gx = np.expand_dims(g, axis=ax) if not keepdims else g
-                gx = gx * np.ones(x_shape, dtype=float) / n
-            return [gx.reshape(x_shape)]
-        tape._record_op([x], result, bw, 'mean')
-    return result
+    return _Mean.apply(_ensure_tensor(x), axis=axis, keepdims=keepdims)
 
 
 def transpose(x, axes=None):
-    x = _ensure_tensor(x)
-    if axes is None:
-        axes = tuple(range(x.ndim - 1, -1, -1))
-    out = np.transpose(x.data, axes)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        inv_axes = tuple(np.argsort(axes))
-        def bw(g):
-            return [np.transpose(g, inv_axes)]
-        tape._record_op([x], result, bw, 'transpose')
-    return result
+    return _Transpose.apply(_ensure_tensor(x), axes)
 
 
 def reshape(x, shape):
-    x = _ensure_tensor(x)
-    out = x.data.reshape(shape)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        x_shape = x.shape
-        def bw(g):
-            return [g.reshape(x_shape)]
-        tape._record_op([x], result, bw, 'reshape')
-    return result
+    return _Reshape.apply(_ensure_tensor(x), shape)
 
 
 def slice_op(x, idx):
-    x = _ensure_tensor(x)
-    out = x.data[idx]
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        def bw(g):
-            full = np.zeros_like(x.data)
-            full[idx] += g
-            return [full]
-        tape._record_op([x], result, bw, 'slice')
-    return result
+    return _Slice.apply(_ensure_tensor(x), idx)
 
 
 def relu(x):
-    x = _ensure_tensor(x)
-    out = np.maximum(0, x.data)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        def bw(g):
-            return [g * (x.data > 0).astype(float)]
-        tape._record_op([x], result, bw, 'relu')
-    return result
+    return _Relu.apply(_ensure_tensor(x))
 
 
 def sigmoid(x):
-    x = _ensure_tensor(x)
-    s = 1.0 / (1.0 + np.exp(-np.clip(x.data, -500, 500)))
-    out = s.copy()
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        s_cache = s.copy()
-        def bw(g):
-            return [g * s_cache * (1.0 - s_cache)]
-        tape._record_op([x], result, bw, 'sigmoid')
-    return result
+    return _Sigmoid.apply(_ensure_tensor(x))
 
 
 def tanh(x):
-    x = _ensure_tensor(x)
-    out = np.tanh(x.data)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        def bw(g):
-            t = np.tanh(x.data)
-            return [g * (1.0 - t ** 2)]
-        tape._record_op([x], result, bw, 'tanh')
-    return result
+    return _Tanh.apply(_ensure_tensor(x))
 
 
 def silu(x):
-    x = _ensure_tensor(x)
-    s = 1.0 / (1.0 + np.exp(-np.clip(x.data, -500, 500)))
-    out = x.data * s
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        s_cache = s.copy()
-        def bw(g):
-            ds = s_cache * (1.0 - s_cache)
-            return [g * (s_cache + x.data * ds)]
-        tape._record_op([x], result, bw, 'silu')
-    return result
+    return _Silu.apply(_ensure_tensor(x))
 
 
 def softmax(x, axis=-1):
-    x = _ensure_tensor(x)
-    x_max = np.max(x.data, axis=axis, keepdims=True)
-    exps = np.exp(x.data - x_max)
-    s = exps / np.sum(exps, axis=axis, keepdims=True)
-    out = s.copy()
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        s_cache = s.copy()
-        def bw(g):
-            dot = np.sum(s_cache * g, axis=axis, keepdims=True)
-            return [s_cache * (g - dot)]
-        tape._record_op([x], result, bw, 'softmax')
-    return result
+    return _Softmax.apply(_ensure_tensor(x), axis=axis)
 
 
 def sqrt(x):
-    x = _ensure_tensor(x)
-    out = np.sqrt(x.data)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        def bw(g):
-            return [g / (2.0 * np.sqrt(x.data) + 1e-15)]
-        tape._record_op([x], result, bw, 'sqrt')
-    return result
+    return _Sqrt.apply(_ensure_tensor(x))
 
 
 def exp(x):
-    x = _ensure_tensor(x)
-    out = np.exp(x.data)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        def bw(g):
-            return [g * np.exp(x.data)]
-        tape._record_op([x], result, bw, 'exp')
-    return result
+    return _Exp.apply(_ensure_tensor(x))
 
 
 def log(x):
-    x = _ensure_tensor(x)
-    out = np.log(x.data + 1e-15)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        def bw(g):
-            return [g / (x.data + 1e-15)]
-        tape._record_op([x], result, bw, 'log')
-    return result
+    return _Log.apply(_ensure_tensor(x))
 
 
 def max_op(x, axis=None, keepdims=False):
-    x = _ensure_tensor(x)
-    out = np.max(x.data, axis=axis, keepdims=keepdims)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        x_shape = x.shape
-        ax = axis
-        def bw(g):
-            mask = (x.data == np.max(x.data, axis=ax, keepdims=True)).astype(float)
-            s = mask.sum(axis=ax, keepdims=True) if ax is not None else mask.sum()
-            s = np.clip(s, 1e-15, None)
-            mask = mask / s
-            if ax is None:
-                gx = g * mask
-            else:
-                gx = np.expand_dims(g, axis=ax) if not keepdims else g
-                gx = gx * mask
-            return [gx.reshape(x_shape)]
-        tape._record_op([x], result, bw, 'max')
-    return result
+    return _Max.apply(_ensure_tensor(x), axis=axis, keepdims=keepdims)
 
 
 def concatenate(tensors, axis=0):
     tensors = [_ensure_tensor(t) for t in tensors]
-    out = np.concatenate([t.data for t in tensors], axis=axis)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape:
-        splits = [t.shape[axis] for t in tensors]
-        def bw(g):
-            grads = np.split(g, np.cumsum(splits[:-1]), axis=axis)
-            return [g if id(t) in tape._watched else None
-                    for g, t in zip(grads, tensors)]
-        tape._record_op(tensors, result, bw, 'concatenate')
-    return result
+    return _Concatenate.apply(axis, *tensors)
 
 
 def tile(x, reps):
-    x = _ensure_tensor(x)
-    out = np.tile(x.data, reps)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        x_shape = x.shape
-        reps_t = tuple(reps) if isinstance(reps, (tuple, list)) else (reps,)
-        def bw(g):
-            for ax, r in enumerate(reps_t):
-                if r > 1:
-                    g = np.add.reduceat(g, np.arange(0, g.shape[ax], x_shape[ax]), axis=ax)
-            return [g.reshape(x_shape)]
-        tape._record_op([x], result, bw, 'tile')
-    return result
+    reps = tuple(reps) if isinstance(reps, (tuple, list)) else (reps,)
+    return _Tile.apply(_ensure_tensor(x), reps)
 
 
 def clip(x, a, b):
-    x = _ensure_tensor(x)
-    out = np.clip(x.data, a, b)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        def bw(g):
-            mask = ((x.data >= a) & (x.data <= b)).astype(float)
-            return [g * mask]
-        tape._record_op([x], result, bw, 'clip')
-    return result
+    return _Clip.apply(_ensure_tensor(x), a, b)
 
 
 def abs_op(x):
-    x = _ensure_tensor(x)
-    out = np.abs(x.data)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        def bw(g):
-            return [g * np.sign(x.data + 1e-15)]
-        tape._record_op([x], result, bw, 'abs')
-    return result
+    return _Abs.apply(_ensure_tensor(x))
+
+
+def repeat_op(x, repeats, axis):
+    return _Repeat.apply(_ensure_tensor(x), repeats, axis)
+
+
+def maximum(a, b):
+    return _Maximum.apply(_ensure_tensor(a), _ensure_tensor(b))
 
 
 def var(x, axis=None, keepdims=False):
     mean = _mean(x, axis=axis, keepdims=True)
     diff = x - mean
     return _mean(diff ** 2, axis=axis, keepdims=keepdims)
-
-
-def repeat_op(x, repeats, axis):
-    x = _ensure_tensor(x)
-    out = np.repeat(x.data, repeats, axis=axis)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and id(x) in tape._watched:
-        x_shape = x.shape
-        def bw(g):
-            shape = list(g.shape)
-            shape.insert(axis + 1, repeats)
-            shape[axis] = x_shape[axis]
-            return [g.reshape(shape).sum(axis=axis + 1)]
-        tape._record_op([x], result, bw, 'repeat')
-    return result
-
-
-def maximum(a, b):
-    a, b = _ensure_tensor(a), _ensure_tensor(b)
-    out = np.maximum(a.data, b.data)
-    result = Tensor(out)
-    tape = get_active_tape()
-    if tape and (id(a) in tape._watched or id(b) in tape._watched):
-        a_shape, b_shape = a.shape, b.shape
-        def bw(g):
-            mask = (a.data >= b.data).astype(float)
-            ga = broadcast_backward(g * mask, a_shape) if id(a) in tape._watched else None
-            gb = broadcast_backward(g * (1.0 - mask), b_shape) if id(b) in tape._watched else None
-            return [ga, gb]
-        tape._record_op([a, b], result, bw, 'maximum')
-    return result

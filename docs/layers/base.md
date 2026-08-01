@@ -70,50 +70,53 @@ def build(self, input_shape):
 
 ### Step 3: `__call__` — the dispatch hub
 
-This is the most important method in the base class. It handles **two completely different modes** from a single entry point.
+This is the most important method in the base class. It handles **two completely different modes** from a single entry point. The logic is factored into two helpers: `_symbolic_call` (graph-building) and `_eager_call` (computation).
 
 ```python
 def __call__(self, inputs, *args, **kwargs):
-    from ..engine.node import KerasTensor, Node
-
-    is_symbolic = False
-    if isinstance(inputs, KerasTensor):
-        is_symbolic = True
-    elif isinstance(inputs, list) and any(isinstance(i, KerasTensor) for i in inputs):
-        is_symbolic = True
-
-    if is_symbolic:
-        # SYMBOLIC BRANCH — during model construction
-        if isinstance(inputs, list):
-            input_shapes = [i.shape for i in inputs]
-        else:
-            input_shapes = inputs.shape
-
-        if not self.built:
-            self.build(input_shapes)
-
-        output_shape = self.compute_output_shape(input_shapes)
-
-        if isinstance(output_shape, list):
-            output_tensors = [KerasTensor(shape=s) for s in output_shape]
-        else:
-            output_tensors = KerasTensor(shape=output_shape)
-
-        Node(self, input_tensors=inputs, output_tensors=output_tensors)
-        return output_tensors
-
-    # EAGER BRANCH — during training / inference
-    if not self.built:
-        if isinstance(inputs, list):
-            self.build([i.shape for i in inputs])
-        else:
-            self.build(inputs.shape)
-    return self.forward(inputs, *args, **kwargs)
+    if self._is_symbolic_input(inputs):
+        return self._symbolic_call(inputs)
+    return self._eager_call(inputs, args, kwargs)
 ```
 
-🔍 **Lines 71-75**: `is_symbolic = ...` — The fork. If the input is a `KerasTensor` (or a list containing one), we're in "graph-building mode." If it's a real NumPy array, we're in "computation mode."
+#### `_is_symbolic_input`
 
-#### The symbolic branch (lines 77-97)
+```python
+def _is_symbolic_input(self, inputs):
+    from ..engine.node import KerasTensor
+
+    if isinstance(inputs, KerasTensor):
+        return True
+    return (isinstance(inputs, list)
+            and any(isinstance(i, KerasTensor) for i in inputs))
+```
+
+🔍 **The fork**: If the input is a `KerasTensor` (or a list containing one), we're in "graph-building mode." If it's a real NumPy array, we're in "computation mode."
+
+#### The symbolic branch — `_symbolic_call`
+
+```python
+def _symbolic_call(self, inputs):
+    from ..engine.node import KerasTensor, Node
+
+    if isinstance(inputs, list):
+        input_shapes = [i.shape for i in inputs]
+    else:
+        input_shapes = inputs.shape
+
+    if not self.built:
+        self.build(input_shapes)
+
+    output_shape = self.compute_output_shape(input_shapes)
+
+    if isinstance(output_shape, list):
+        output_tensors = [KerasTensor(shape=s) for s in output_shape]
+    else:
+        output_tensors = KerasTensor(shape=output_shape)
+
+    Node(self, input_tensors=inputs, output_tensors=output_tensors)
+    return output_tensors
+```
 
 When you use the Functional API like:
 
@@ -124,17 +127,35 @@ x = Dense(64)(inputs)
 
 The `KerasTensor` called `inputs` is passed to `Dense.__call__`. No actual numbers flow through — just shape information.
 
-🔍 **Lines 79-82**: `input_shapes = ...` — Extracts the shape from the symbolic tensor. Shapes look like `(None, 128)` where `None` means "unknown batch size."
+🔍 **`input_shapes = ...`** — Extracts the shape from the symbolic tensor. Shapes look like `(None, 128)` where `None` means "unknown batch size."
 
-🔍 **Line 84-85**: `self.build(input_shapes)` — Allocates weight matrices with the correct dimensions, but the actual *values* don't matter here. What matters is that `self.params['W']` now exists with the right shape.
+🔍 **`self.build(input_shapes)`** — Allocates weight matrices with the correct dimensions, but the actual *values* don't matter here. What matters is that `self.params['W']` now exists with the right shape.
 
-🔍 **Line 87**: `self.compute_output_shape(input_shapes)` — Asks the layer: "If I give you input shape `(None, 128)`, what will my output shape be?" For a `Dense(64)` layer, the answer is `(None, 64)`.
+🔍 **`self.compute_output_shape(input_shapes)`** — Asks the layer: "If I give you input shape `(None, 128)`, what will my output shape be?" For a `Dense(64)` layer, the answer is `(None, 64)`.
 
-🔍 **Lines 90-93**: Creating output `KerasTensor`s — Wraps the computed output shape into a new symbolic tensor. This tensor will be passed as input to the *next* layer.
+🔍 **Creating output `KerasTensor`s** — Wraps the computed output shape into a new symbolic tensor. This tensor will be passed as input to the *next* layer.
 
-🔍 **Line 96**: `Node(self, input_tensors=inputs, output_tensors=output_tensors)` — Records the connection in the computation graph. This `Node` links "the input tensor(s)" to "the output tensor(s)" through "this layer." Later, `Model` walks these nodes to figure out the topology — which layers connect to which, what the forward pass order should be, and what the inputs/outputs of the whole model are.
+🔍 **`Node(self, input_tensors=inputs, output_tensors=output_tensors)`** — Records the connection in the computation graph. This `Node` links "the input tensor(s)" to "the output tensor(s)" through "this layer." Later, `Model` walks these nodes to figure out the topology — which layers connect to which, what the forward pass order should be, and what the inputs/outputs of the whole model are.
 
-#### The eager branch (lines 99-105)
+#### The eager branch — `_eager_call`
+
+```python
+def _eager_call(self, inputs, args, kwargs):
+    from neutro.autograd import as_tensor as _as_tensor
+
+    t_inputs = _as_tensor(inputs)
+    if not self.built:
+        if isinstance(t_inputs, list):
+            self.build([i.shape for i in t_inputs])
+        else:
+            self.build(t_inputs.shape)
+    self._last_inputs = t_inputs
+    self._last_args = args
+    self._last_kwargs = kwargs
+    output = self.forward(t_inputs, *args, **kwargs)
+    self._last_output = output
+    return output
+```
 
 When you call a layer directly with real data:
 
@@ -143,35 +164,40 @@ x = np.random.randn(32, 128)
 y = layer(x)  # forwards! actual computation!
 ```
 
-🔍 **Lines 100-104**: `if not self.built: self.build(inputs.shape)` — First call? Build the weights using the actual concrete shape (e.g., `(32, 128)`). Note that `inputs.shape` here is a real tuple of integers, not a symbolic shape with `None`.
+🔍 **`if not self.built: self.build(t_inputs.shape)`** — First call? Build the weights using the actual concrete shape (e.g., `(32, 128)`). Note that `inputs.shape` here is a real tuple of integers, not a symbolic shape with `None`.
 
-🔍 **Line 105**: `return self.forward(inputs, *args, **kwargs)` — Delegates to the subclass's actual computation. This is where the matrix multiply happens, where the convolution runs, where the attention scores are computed.
+🔍 **`self._last_inputs = t_inputs`** — Caches the input for the `backward` method, which re-runs the forward pass inside a `GradientTape` to compute gradients.
+
+🔍 **`return self.forward(t_inputs, *args, **kwargs)`** — Delegates to the subclass's actual computation. This is where the matrix multiply happens, where the convolution runs, where the attention scores are computed.
 
 ### Step 4: `sublayers` — finding nested layers
 
 ```python
 @property
 def sublayers(self):
-    layers = []
-    for attr_name in dir(self):
-        if attr_name.startswith('_') or attr_name == 'sublayers':
-            continue
-        try:
-            attr = getattr(self, attr_name)
-        except AttributeError:
-            continue
+    """Return all nested layers contained within this layer.
 
+    Traverses instance attributes, including sublayers stored in lists,
+    tuples, or dictionaries, with cycle protection and de-duplication.
+    """
+    layers = []
+    visited_ids = {id(self)}
+    stack = []
+    for attr in vars(self).values():
+        stack.append(attr)
+
+    while stack:
+        attr = stack.pop()
         if isinstance(attr, Layer):
-            layers.append(attr)
-        elif isinstance(attr, list):
-            stack = [attr]
-            while stack:
-                curr = stack.pop()
-                for item in curr:
-                    if isinstance(item, Layer):
-                        layers.append(item)
-                    elif isinstance(item, list):
-                        stack.append(item)
+            if id(attr) not in visited_ids:
+                visited_ids.add(id(attr))
+                layers.append(attr)
+                for nested in vars(attr).values():
+                    stack.append(nested)
+        elif isinstance(attr, (list, tuple, set)):
+            stack.extend(attr)
+        elif isinstance(attr, dict):
+            stack.extend(attr.values())
     return layers
 ```
 
@@ -186,12 +212,12 @@ class TransformerBlock(Layer):
 
 When the optimizer needs to find **all** trainable parameters, it calls `sublayers` on the top-level model. The property:
 
-1. Iterates over every attribute of the layer using `dir(self)` — this includes attributes defined in `__init__` of the current class **and** parent classes.
-2. Skips private attributes (starting with `_`) and the property itself (to avoid infinite recursion).
-3. If an attribute is a `Layer` instance, it collects it — this catches `self.attention`, `self.norm`, etc.
-4. If an attribute is a **list**, it recursively searches inside it — this catches `self.ffn = [Dense(512), Dense(512)]`. It even handles lists-of-lists (used by `MoELayer` which has a list of expert lists).
+1. Collects every instance attribute of the layer (via `vars(self)`) into a work stack.
+2. If an attribute is a `Layer` instance, it collects it and pushes that layer's own attributes onto the stack — this catches `self.attention`, `self.norm`, etc. The `visited_ids` set de-duplicates, so a shared layer used in multiple branches is only reported once.
+3. If an attribute is a **list, tuple, or set**, it pushes each element — this catches `self.ffn = [Dense(512), Dense(512)]` and the lists-of-lists used by `MoELayer` (a list of expert lists).
+4. If an attribute is a **dict**, it pushes the values.
 
-🔍 **Why is this important?** Without `sublayers`, a `TransformerBlock` would report only its own `params` dict (which is empty — it delegates everything to sublayers). With `sublayers`, the optimizer can traverse the full hierarchy and find every weight matrix in every attention head and every feed-forward layer.
+🔍 **Why is this important?** Without `sublayers`, a `TransformerBlock` would report only its own `params` dict (which is empty — it delegates everything to sublayers). With `sublayers`, the optimizer can traverse the full hierarchy and find every weight matrix in every attention head and every feed-forward layer. The cycle protection (`visited_ids`) and de-duplication prevent infinite recursion and double-counting when layers are shared.
 
 ### Step 5: `count_params` — the recursive parameter counter
 
@@ -218,14 +244,43 @@ def compute_output_shape(self, input_shape):
     return input_shape
 ```
 
-🔍 **Lines 55-62**: Default behavior — if no `output_shape` was explicitly set, assume the output shape equals the input shape. Subclasses like `Dense` override this to return `(*input_shape[:-1], units)`.
+🔍 **Default behavior** — if no `output_shape` was explicitly set, assume the output shape equals the input shape. Subclasses like `Dense` override this to return `(*input_shape[:-1], units)`.
+
+#### `backward`
+
+The base `Layer.backward` provides a **generic gradient mechanism** for layers whose `forward` is written with autograd `Tensor` operations. It re-runs the forward pass inside a `GradientTape` to recover the parameter gradients via reverse-mode differentiation:
 
 ```python
 def backward(self, grad_output):
-    raise NotImplementedError
+    from neutro.autograd import GradientTape, Tensor as AT
+
+    t_inputs = self._captured_inputs()          # autograd view of the last inputs
+    if t_inputs is None:
+        return np.asarray(grad_output)
+
+    fwd_args = getattr(self, '_last_args', ())
+    fwd_kwargs = getattr(self, '_last_kwargs', {}).copy()
+    fwd_kwargs.pop('kv_cache', None)            # runtime bookkeeping, not differentiable
+    fwd_kwargs.pop('layer_id', None)
+
+    all_sources = list(self._collect_tensor_params().values())
+    # ... include t_inputs in all_sources ...
+
+    with GradientTape() as tape:
+        for source in all_sources:
+            tape.watch(source)
+        output = self.forward(t_inputs, *fwd_args, **fwd_kwargs)
+        g_t = AT(np.asarray(grad_output))
+        loss = (output * g_t).sum()             # dot product = weighted gradient probe
+
+    tape.gradient(loss, all_sources)
+    # ... copy param_value.grad into layer.grads for every sublayer ...
+    return t_inputs.grad.copy()                 # gradient w.r.t. the inputs
 ```
 
-🔍 **Line 64-65**: The base class doesn't know how to backpropagate (that depends on the concrete computation). Subclasses **must** implement this. If they don't, calling `backward` will crash with `NotImplementedError` — a clear signal that you forgot to implement it.
+🔍 **Why re-run forward?** The gradient of the weighted probe `loss = (output * g_t).sum()` w.r.t. any parameter is exactly the upstream gradient `g_t` propagated through the layer's computation graph. This gives a correct, dependency-free backward pass for any forward written purely with autograd ops.
+
+🔍 **`_captured_inputs` / `_collect_tensor_params`** — helper methods that rebuild the input `Tensor`s and gather every autograd parameter across the layer tree (including sublayers). This is what makes `backward` work for nested layers like `TransformerBlock` without each sublayer reimplementing graph traversal.
 
 ## Putting it all together
 

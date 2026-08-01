@@ -1,24 +1,26 @@
-import numpy as np
+from functools import reduce
+
 from ..base import Layer
 from neutro.autograd import Tensor
 from neutro.autograd import ops as autograd_ops
 
 
 def _to_tensor(x):
+    """Coerce `x` into an autograd Tensor if it is not already one."""
     return Tensor(x) if not isinstance(x, Tensor) else x
 
 
-class Add(Layer):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+class _ReduceBase(Layer):
+    """Shared base for merging layers that reduce a list of tensors.
+
+    All reduce-type layers (Add, Multiply, Average, Maximum, Minimum)
+    share identical build/output-shape logic and a forward pass that
+    folds a single binary operation over the input list.
+    """
 
     def build(self, input_shape):
-        if isinstance(input_shape, list):
-            self.input_shape = input_shape
-            self.output_shape = input_shape[0]
-        else:
-            self.input_shape = input_shape
-            self.output_shape = input_shape
+        self.input_shape = input_shape
+        self.output_shape = self.compute_output_shape(input_shape)
         self.built = True
 
     def compute_output_shape(self, input_shape):
@@ -26,13 +28,19 @@ class Add(Layer):
             return input_shape[0]
         return input_shape
 
+    def _combine(self, left, right):
+        """Combine two tensors. Must be implemented by subclasses."""
+        raise NotImplementedError
+
     def forward(self, inputs, training=False):
         if not isinstance(inputs, list):
             return inputs
-        result = _to_tensor(inputs[0])
-        for i in range(1, len(inputs)):
-            result = result + _to_tensor(inputs[i])
-        return result
+        return reduce(self._combine, map(_to_tensor, inputs))
+
+
+class Add(_ReduceBase):
+    def _combine(self, left, right):
+        return left + right
 
 
 class Concatenate(Layer):
@@ -67,95 +75,27 @@ class Concatenate(Layer):
         return autograd_ops.concatenate(tensors, axis=self.axis)
 
 
-class Multiply(Layer):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+class Multiply(_ReduceBase):
+    def _combine(self, left, right):
+        return left * right
 
-    def compute_output_shape(self, input_shape):
-        if isinstance(input_shape, list):
-            return input_shape[0]
-        return input_shape
 
-    def build(self, input_shape):
-        self.input_shape = input_shape
-        self.output_shape = self.compute_output_shape(input_shape)
-        self.built = True
-
+class Average(_ReduceBase):
     def forward(self, inputs, training=False):
-        if not isinstance(inputs, list):
-            return inputs
-        result = _to_tensor(inputs[0])
-        for i in range(1, len(inputs)):
-            result = result * _to_tensor(inputs[i])
+        result = super().forward(inputs, training=training)
+        if isinstance(inputs, list) and len(inputs) > 1:
+            result = result / float(len(inputs))
         return result
 
-
-class Average(Layer):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def compute_output_shape(self, input_shape):
-        if isinstance(input_shape, list):
-            return input_shape[0]
-        return input_shape
-
-    def build(self, input_shape):
-        self.input_shape = input_shape
-        self.output_shape = self.compute_output_shape(input_shape)
-        self.built = True
-
-    def forward(self, inputs, training=False):
-        if not isinstance(inputs, list):
-            return inputs
-        result = _to_tensor(inputs[0])
-        for i in range(1, len(inputs)):
-            result = result + _to_tensor(inputs[i])
-        return result / float(len(inputs))
+    def _combine(self, left, right):
+        return left + right
 
 
-class Maximum(Layer):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def compute_output_shape(self, input_shape):
-        if isinstance(input_shape, list):
-            return input_shape[0]
-        return input_shape
-
-    def build(self, input_shape):
-        self.input_shape = input_shape
-        self.output_shape = self.compute_output_shape(input_shape)
-        self.built = True
-
-    def forward(self, inputs, training=False):
-        if not isinstance(inputs, list):
-            return inputs
-        result = _to_tensor(inputs[0])
-        for i in range(1, len(inputs)):
-            other = _to_tensor(inputs[i])
-            result = autograd_ops.maximum(result, other)
-        return result
+class Maximum(_ReduceBase):
+    def _combine(self, left, right):
+        return autograd_ops.maximum(left, right)
 
 
-class Minimum(Layer):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def compute_output_shape(self, input_shape):
-        if isinstance(input_shape, list):
-            return input_shape[0]
-        return input_shape
-
-    def build(self, input_shape):
-        self.input_shape = input_shape
-        self.output_shape = self.compute_output_shape(input_shape)
-        self.built = True
-
-    def forward(self, inputs, training=False):
-        if not isinstance(inputs, list):
-            return inputs
-        result = _to_tensor(inputs[0])
-        for i in range(1, len(inputs)):
-            other = _to_tensor(inputs[i])
-            result = -autograd_ops.maximum(-result, -other)
-        return result
+class Minimum(_ReduceBase):
+    def _combine(self, left, right):
+        return -autograd_ops.maximum(-left, -right)

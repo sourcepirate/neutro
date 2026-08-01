@@ -2,7 +2,23 @@
 
 Merge layers combine **multiple input tensors** into a single output tensor. They are essential for building non-linear architectures like ResNets (skip connections), Inception modules, and multi-branch networks. Every merge layer takes a **list of tensors** as input.
 
-## Add — `merging.py:4`
+## Shared structure
+
+All reduce-type merge layers (`Add`, `Multiply`, `Average`, `Maximum`, `Minimum`) inherit from `_ReduceBase` (`merging.py:11`), which provides the common `build`, `compute_output_shape`, and a `forward` that folds a single binary operation over the input list. Each concrete layer only implements `_combine(left, right)` — the per-pair reduction:
+
+```python
+def forward(self, inputs, training=False):
+    if not isinstance(inputs, list):
+        return inputs
+    result = _to_tensor(inputs[0])
+    for other in inputs[1:]:
+        result = self._combine(result, _to_tensor(other))
+    return result
+```
+
+`_to_tensor` coerces plain NumPy inputs into autograd `Tensor`s so the whole reduction is differentiable.
+
+## Add — `merging.py:42`
 
 ### What does this layer do?
 
@@ -18,32 +34,20 @@ Every input must have the **same shape**. The output has that same shape.
 
 ### Walking through the code
 
-#### `forward`
+#### `_combine`
 
 ```python
-def forward(self, inputs, training=False):
-    self.input_lengths = len(inputs)
-    return sum(inputs)
+def _combine(self, left, right):
+    return left + right
 ```
-
-🔍 **Line `self.input_lengths = len(inputs)`**: We cache the number of inputs. The backward pass needs this to know how many gradient tensors to return.
-
-🔍 **Line `return sum(inputs)`**: Python's built-in `sum()` on a list of NumPy arrays performs element-wise addition. All arrays must have the same shape. For example, listing `[a, b, c]` computes `a + b + c`.
 
 📐 **Shape**: If each input is `(batch, 64)`, the output is also `(batch, 64)`.
 
-#### `backward`
-
-```python
-def backward(self, grad_output):
-    return [grad_output for _ in range(self.input_lengths)]
-```
-
-🔍 **Line `[grad_output for _ in range(self.input_lengths)]`**: For $y = x_1 + x_2$, we have $\partial y / \partial x_1 = 1$ and $\partial y / \partial x_2 = 1$. So by the chain rule, $\partial L / \partial x_i = \partial L / \partial y \cdot 1$. The gradient is **broadcast unchanged** to every input. We return a list with `N` identical gradient tensors.
+The additive reduction routes the gradient unchanged back to every input, so skip connections receive clean gradient flow.
 
 ---
 
-## Concatenate — `merging.py:42`
+## Concatenate — `merging.py:47`
 
 ### What does this layer do?
 
@@ -123,7 +127,7 @@ def backward(self, grad_output):
 
 ---
 
-## Multiply — `merging.py:85`
+## Multiply — `merging.py:79`
 
 ### What does this layer do?
 
@@ -145,55 +149,35 @@ $$
 
 ### Walking through the code
 
-#### `forward`
+#### `_combine`
 
 ```python
-def forward(self, inputs, training=False):
-    self.inputs = inputs
-    res = inputs[0].copy()
-    for i in range(1, len(inputs)):
-        res *= inputs[i]
-    return res
+def _combine(self, left, right):
+    return left * right
 ```
 
-🔍 **Line `self.inputs = inputs`**: Cache the list of inputs for the backward pass. The backward pass needs to access all inputs except the one being differentiated.
-
-🔍 **Line `res = inputs[0].copy()`**: Start with a **copy** of the first input. We use `.copy()` to avoid mutating the original input tensor.
-
-🔍 **Line `res *= inputs[i]`**: Multiply element-by-element. After the loop, `res` is the product of all inputs.
+The base `_ReduceBase.forward` folds this pairwise product over all inputs: `(a * b) * c`.
 
 📐 **Shape**: `(8, 64)` × `(8, 64)` × `(8, 64)` → `(8, 64)`.
 
 #### `backward`
 
-```python
-def backward(self, grad_output):
-    grads = []
-    for i in range(len(self.inputs)):
-        g = grad_output.copy()
-        for j in range(len(self.inputs)):
-            if i == j:
-                continue
-            g *= self.inputs[j]
-        grads.append(g)
-    return grads
-```
+The `Multiply` reduction is performed on autograd `Tensor`s, so the reverse-mode engine (`GradientTape`) computes the gradients automatically. For $y = x_1 \odot x_2 \odot \cdots \odot x_N$:
 
-🔍 **Line `g = grad_output.copy()`**: Start with the upstream gradient.
-
-🔍 **Line `for j ... if i == j: continue; g *= self.inputs[j]`**:
-For input $x_i$, we multiply the upstream gradient by **every other input** $x_j$ for $j \neq i$. This implements $\partial L / \partial x_i = \partial L / \partial y \cdot \prod_{j \neq i} x_j$.
+$$
+\frac{\partial L}{\partial x_i} = \frac{\partial L}{\partial y} \odot \prod_{j \neq i} x_j
+$$
 
 📐 **Example with 3 inputs**: $y = a \cdot b \cdot c$.
 - $\partial L / \partial a = \partial L / \partial y \cdot b \cdot c$
 - $\partial L / \partial b = \partial L / \partial y \cdot a \cdot c$
 - $\partial L / \partial c = \partial L / \partial y \cdot a \cdot b$
 
-The loops compute exactly these products.
+The autograd engine computes exactly these products.
 
 ---
 
-## Average — `merging.py:120`
+## Average — `merging.py:84`
 
 ### What does this layer do?
 
@@ -211,26 +195,21 @@ $$
 
 ```python
 def forward(self, inputs, training=False):
-    self.input_lengths = len(inputs)
-    return sum(inputs) / self.input_lengths
+    result = super().forward(inputs, training=training)   # sum via _combine
+    if isinstance(inputs, list) and len(inputs) > 1:
+        result = result / float(len(inputs))
+    return result
 ```
 
-🔍 **Line `self.input_lengths = len(inputs)`**: Cache the number of inputs `N` for the backward pass.
-
-🔍 **Line `sum(inputs) / self.input_lengths`**: Python's `sum()` adds element-wise, then dividing by `N` gives the average.
+The base `_ReduceBase.forward` sums all inputs with `_combine(a, b) = a + b`, then `Average` divides by the number of inputs `N`.
 
 #### `backward`
 
-```python
-def backward(self, grad_output):
-    return [grad_output / self.input_lengths for _ in range(self.input_lengths)]
-```
-
-🔍 **Line `grad_output / self.input_lengths`**: The derivative of $y = (x_1 + \dots + x_N) / N$ w.r.t. $x_i$ is $1/N$. Each input receives the upstream gradient divided by the number of inputs.
+The derivative of $y = (x_1 + \dots + x_N) / N$ w.r.t. $x_i$ is $1/N$. Each input receives the upstream gradient divided by the number of inputs, computed automatically by the autograd engine.
 
 ---
 
-## Maximum — `merging.py:144`
+## Maximum — `merging.py:95`
 
 ### What does this layer do?
 
@@ -248,51 +227,31 @@ The backward pass uses **argmax routing**: the gradient flows only to the input(
 
 ### Walking through the code
 
-#### `forward`
+#### `_combine`
 
 ```python
-def forward(self, inputs, training=False):
-    self.inputs = inputs
-    res = inputs[0].copy()
-    for i in range(1, len(inputs)):
-        res = np.maximum(res, inputs[i])
-    return res
+def _combine(self, left, right):
+    return autograd_ops.maximum(left, right)
 ```
 
-🔍 **Line `self.inputs = inputs`**: Cache the inputs. The backward pass needs to compare each input against the maximum.
-
-🔍 **Line `np.maximum(res, inputs[i])`**: Element-wise maximum. `np.maximum(a, b)` returns an array where each element is `max(a_element, b_element)`.
+The base `_ReduceBase.forward` folds this pairwise `maximum` over all inputs. `autograd_ops.maximum` is differentiable, so the backward pass runs through the autograd engine.
 
 📐 **Shape**: All `(8, 64)`. Output: `(8, 64)`.
 
 #### `backward`
 
-```python
-def backward(self, grad_output):
-    max_val = self.forward(self.inputs)
-    grads = []
-    for inp in self.inputs:
-        mask = (inp == max_val)
-        grads.append(grad_output * mask)
-    return grads
-```
+The autograd engine uses **argmax routing**: the gradient flows only to the input(s) that actually **were** the maximum at each position. All other inputs receive zero gradient.
 
-🔍 **Line `max_val = self.forward(self.inputs)`**: Recompute the maximum values by calling `forward` again. (Alternative: cache `max_val` in forward.)
-
-🔍 **Line `mask = (inp == max_val)`**: For each input, create a boolean mask that is `True` wherever this input equals the maximum value. If multiple inputs share the maximum at a position, all of them get gradient.
-
-🔍 **Line `grad_output * mask`**: The mask zeros out the gradient everywhere this input was **not** the maximum. Only the "winning" input receives gradient.
-
-📐 **The logic**: For $y = \max(x_1, x_2)$, the subgradient is:
+🔍 **The logic**: For $y = \max(x_1, x_2)$, the subgradient is:
 $$
 \frac{\partial y}{\partial x_1} = \begin{cases} 1 & \text{if } x_1 > x_2 \\ 0 & \text{if } x_1 < x_2 \\ \text{any value in } [0,1] & \text{if } x_1 = x_2 \end{cases}
 $$
 
-Neutro uses the tie-case convention: if two inputs are equal, **both** get gradient (the mask is `True` for both).
+Neutro uses the tie-case convention: if two inputs are equal, **both** get gradient.
 
 ---
 
-## Minimum — `merging.py:177`
+## Minimum — `merging.py:100`
 
 ### What does this layer do?
 
@@ -308,34 +267,18 @@ The backward pass uses **argmin routing**: gradient flows only to the input(s) t
 
 ### Walking through the code
 
-#### `forward`
+#### `_combine`
 
 ```python
-def forward(self, inputs, training=False):
-    self.inputs = inputs
-    res = inputs[0].copy()
-    for i in range(1, len(inputs)):
-        res = np.minimum(res, inputs[i])
-    return res
+def _combine(self, left, right):
+    return -autograd_ops.maximum(-left, -right)
 ```
 
-Identical to Maximum but uses `np.minimum`.
+`Minimum` is implemented as the negation of `Maximum`: `min(a, b) = -max(-a, -b)`. This reuses the differentiable `maximum` op.
 
 #### `backward`
 
-```python
-def backward(self, grad_output):
-    min_val = self.forward(self.inputs)
-    grads = []
-    for inp in self.inputs:
-        mask = (inp == min_val)
-        grads.append(grad_output * mask)
-    return grads
-```
-
-Identical to Maximum's backward but using the minimum value as the comparison target.
-
-🔍 **Line `mask = (inp == min_val)`**: Gradient passes only where this input equals the minimum. For ties, multiple inputs receive gradient.
+Identical to Maximum's backward: gradient passes only where this input equals the minimum (argmin routing), computed by the autograd engine. For ties, multiple inputs receive gradient.
 
 ---
 

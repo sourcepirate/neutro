@@ -4,12 +4,15 @@ from .core.dense import Dense
 from .core.dropout import Dropout
 from .core.flatten import Flatten
 from .core.activation import Activation, ReLU, Softmax, Sigmoid, Tanh
+from .core.bitlinear import BitLinear
+from .core.reparameterization import Reparameterization
 from .core.moe import MoELayer
 from .core.merging import Add, Concatenate, Multiply, Average, Maximum, Minimum
 from .convolutional.conv2d import Conv2D
 from .convolutional.conv1d import Conv1D
 from .pooling.maxpooling2d import MaxPooling2D
 from .pooling.global_pooling import GlobalAveragePooling2D, GlobalMaxPooling2D
+from .pooling.upsampling2d import UpSampling2D
 from .recurrent.simple_rnn import SimpleRNN
 from .recurrent.lstm import LSTM
 from .recurrent.gru import GRU
@@ -20,7 +23,10 @@ from .attention.flash_attention import FlashAttention
 from .attention.paged_attention import PagedAttention, PagedKVCache
 from .normalization.layernorm import LayerNormalization
 from .normalization.batchnorm import BatchNormalization
+from .normalization.rmsnorm import RMSNorm
+from .normalization.groupnorm import GroupNormalization
 from .embedding.embedding import Embedding
+from .embedding.time_embedding import TimeEmbedding
 from .embedding.token_position_embedding import TokenPositionEmbedding
 from .transformer.transformer_block import TransformerBlock
 from .transformer.bitnet_block import BitNetBlock

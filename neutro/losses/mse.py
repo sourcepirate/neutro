@@ -4,6 +4,8 @@ from neutro.autograd import Tensor, as_tensor
 
 
 class MeanSquaredError(Loss):
+    """Mean squared error loss."""
+
     def __call__(self, y_true, y_pred):
         y_true = as_tensor(y_true)
         return ((y_pred - y_true) ** 2).mean()

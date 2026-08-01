@@ -1,8 +1,5 @@
 import numpy as np
-from .tensor import Tensor
-from .function import Function, _Ctx
-from .utils import broadcast_backward
-from .tape import get_active_tape
+from .function import Function
 
 
 class Gather(Function):
