@@ -4,7 +4,7 @@ import numpy as np
 def as_tensor(x):
     if isinstance(x, Tensor):
         return x
-    if isinstance(x, list):
+    if isinstance(x, (list, tuple)):
         return [as_tensor(i) for i in x]
     if isinstance(x, np.ndarray):
         return Tensor(x)
@@ -18,10 +18,15 @@ class Tensor:
         self.data = np.asarray(data, dtype=float)
         self.grad = None
 
+    __hash__ = object.__hash__
+
     def __array__(self, dtype=None):
         if dtype is None:
             return self.data
         return self.data.astype(dtype)
+
+    def __bool__(self):
+        return bool(self.data)
 
     def zero_grad(self):
         self.grad = None
@@ -84,11 +89,11 @@ class Tensor:
             axes = axes[0]
         return transpose(self, axes)
 
-    def sum(self, axis=None, keepdims=False, **kwargs):
+    def sum(self, axis=None, keepdims=False, dtype=None, out=None):
         from .ops import _sum
         return _sum(self, axis=axis, keepdims=keepdims)
 
-    def mean(self, axis=None, keepdims=False, **kwargs):
+    def mean(self, axis=None, keepdims=False, dtype=None, out=None):
         from .ops import _mean
         return _mean(self, axis=axis, keepdims=keepdims)
 

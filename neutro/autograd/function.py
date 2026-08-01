@@ -34,7 +34,7 @@ class Function:
         result = Tensor(output_data)
 
         tape = get_active_tape()
-        if tape and any(id(t) in tape._watched for t in tensor_args):
+        if tape and any(t in tape._watched for t in tensor_args):
             for name in ctx.saved_data:
                 val = ctx.saved_data[name]
                 if isinstance(val, Tensor):
@@ -47,13 +47,13 @@ class Function:
                 grad_inputs = cls.backward(ctx_copy, g)
                 if not isinstance(grad_inputs, (list, tuple)):
                     grad_inputs = [grad_inputs]
-                result = []
+                out_grads = []
                 for t, gi in zip(tensor_args, grad_inputs):
                     if gi is not None:
-                        result.append(broadcast_backward(gi, t.shape))
+                        out_grads.append(broadcast_backward(gi, t.shape))
                     else:
-                        result.append(None)
-                return result
+                        out_grads.append(None)
+                return out_grads
 
             tape._record_op(tensor_args, result, bw, cls.__name__)
 
