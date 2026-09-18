@@ -1,12 +1,13 @@
-import numpy as np
 from .base_attention import BaseAttention
 from ...initializers import get as get_initializer
 from neutro.autograd import Tensor, ops as autograd_ops
 
 
 class GroupedQueryAttention(BaseAttention):
-    def __init__(self, num_heads, num_groups, key_dim):
-        super().__init__()
+    """Grouped-query attention — KV heads shared within groups."""
+
+    def __init__(self, num_heads, num_groups, key_dim, **kwargs):
+        super().__init__(**kwargs)
         self.num_heads = num_heads
         self.num_groups = num_groups
         self.key_dim = key_dim
@@ -23,12 +24,20 @@ class GroupedQueryAttention(BaseAttention):
         super().build(input_shape)
 
     def forward(self, query, value=None, key=None, mask=None, training=False):
-        if value is None: value = query
-        if key is None: key = value
+        if value is None:
+            value = query
+        if key is None:
+            key = value
         batch_size = query.shape[0]
-        Q = (query @ self.params['Wq']).reshape(batch_size, -1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        K = (key @ self.params['Wk']).reshape(batch_size, -1, self.num_groups, self.head_dim).transpose(0, 2, 1, 3)
-        V = (value @ self.params['Wv']).reshape(batch_size, -1, self.num_groups, self.head_dim).transpose(0, 2, 1, 3)
+        Q = (query @ self.params["Wq"]).reshape(
+            batch_size, -1, self.num_heads, self.head_dim,
+        ).transpose(0, 2, 1, 3)
+        K = (key @ self.params["Wk"]).reshape(
+            batch_size, -1, self.num_groups, self.head_dim,
+        ).transpose(0, 2, 1, 3)
+        V = (value @ self.params["Wv"]).reshape(
+            batch_size, -1, self.num_groups, self.head_dim,
+        ).transpose(0, 2, 1, 3)
         if self.heads_per_group > 1:
             K = autograd_ops.concatenate([K] * self.heads_per_group, axis=1)
             V = autograd_ops.concatenate([V] * self.heads_per_group, axis=1)

@@ -1,8 +1,11 @@
 from .base import Callback
 
+
 class History(Callback):
+    """Records training history — populated automatically by ``Model.fit``."""
+
     def on_train_begin(self, logs=None):
-        self.history = {'loss': [], 'epoch': []}
+        self.history = {"loss": [], "epoch": []}
 
     def on_epoch_end(self, epoch, logs=None):
         self.history['epoch'].append(epoch)

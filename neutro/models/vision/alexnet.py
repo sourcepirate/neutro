@@ -1,5 +1,5 @@
 from ..base_model import Sequential
-from ...layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, ReLU, Softmax
+from ...layers import Conv2D, Dense, Dropout, Flatten, MaxPooling2D, Softmax
 
 def AlexNet(input_shape=(227, 227, 3), num_classes=1000, data_format='channels_last'):
     """

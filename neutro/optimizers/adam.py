@@ -1,15 +1,13 @@
 import numpy as np
-from .base import Optimizer
+
 from neutro.autograd import Tensor
+
+from .base import Optimizer, _get_data
 
 DEFAULT_LR = 0.001
 DEFAULT_BETA_1 = 0.9
 DEFAULT_BETA_2 = 0.999
 DEFAULT_EPSILON = 1e-7
-
-
-def _get_data(p):
-    return p.data if isinstance(p, Tensor) else p
 
 
 class Adam(Optimizer):

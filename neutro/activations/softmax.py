@@ -15,6 +15,7 @@ class Softmax(Activation):
         )
 
     def gradient_fast(self, x, grad_output):
-        s = self(x).data if hasattr(self(x), 'data') else self(x)
+        out = self(x)
+        s = out.data if hasattr(out, "data") else out
         dot = np.sum(s * grad_output, axis=-1, keepdims=True)
         return s * (grad_output - dot)

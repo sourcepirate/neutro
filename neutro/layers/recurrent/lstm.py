@@ -5,8 +5,8 @@ from neutro.autograd import Tensor, ops as autograd_ops
 
 
 class LSTM(Layer):
-    def __init__(self, units, return_sequences=False):
-        super().__init__()
+    def __init__(self, units, return_sequences=False, **kwargs):
+        super().__init__(**kwargs)
         self.units = units
         self.return_sequences = return_sequences
 

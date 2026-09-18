@@ -1,5 +1,32 @@
 import numpy as np
 
+
+# ---------------------------------------------------------------------------
+# Channel format helpers — shared by Conv2D and MaxPooling2D
+# ---------------------------------------------------------------------------
+
+def shape_to_channels_last(shape, data_format):
+    """Convert shape tuple to channels_last ordering."""
+    if data_format == "channels_first":
+        batch, c, h, w = shape
+        return batch, h, w, c
+    return shape
+
+
+def to_channels_last(inputs, data_format):
+    """Transpose inputs to channels_last if needed."""
+    if data_format == "channels_first":
+        return inputs.transpose(0, 2, 3, 1)
+    return inputs
+
+
+def from_channels_last(inputs, data_format):
+    """Transpose inputs back from channels_last if needed."""
+    if data_format == "channels_first":
+        return inputs.transpose(0, 3, 1, 2)
+    return inputs
+
+
 def get_im2col_indices(x_shape, field_height, field_width, padding=0, stride=1):
     # First figure out output sizes
     N, C, H, W = x_shape

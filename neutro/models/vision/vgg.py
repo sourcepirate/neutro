@@ -1,5 +1,5 @@
 from ..base_model import Sequential
-from ...layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, ReLU, Softmax
+from ...layers import Conv2D, Dense, Dropout, Flatten, MaxPooling2D, Softmax
 
 def _vgg_block(filters, num_convs, data_format):
     layers = []

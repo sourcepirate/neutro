@@ -1,14 +1,18 @@
 import copy
 import inspect
 
-import numpy as np
 import joblib
+import numpy as np
 from tqdm import tqdm
-from .. import metrics as metrics_module
-from .. import losses as losses_module
-from ..callbacks import History
 
+from .. import losses as losses_module
+from .. import metrics as metrics_module
+from ..callbacks import History
+from ..engine.node import Node
+from ..layers.attention.kv_cache import KVCache
 from ..layers.base import Layer
+from ..layers.core.input_layer import InputLayer
+from neutro.autograd import GradientTape, Tensor as AutoTensor, as_tensor
 
 
 def _iter_layer_tree(root):
@@ -41,8 +45,6 @@ class Model(Layer):
 
     def _init_graph(self, inputs, outputs):
         """Traverse the graph from outputs to inputs to discover layers and nodes."""
-        from ..engine.node import Node
-
         self._nodes_by_depth = []
         self._layers = []
 
@@ -304,8 +306,6 @@ class Model(Layer):
     def _train_on_batch(self, x_batch, y_batch, use_autograd):
         """Run a single training step, returning (batch_loss, output)."""
         if use_autograd:
-            from neutro.autograd import GradientTape, Tensor as AutoTensor
-
             with GradientTape() as tape:
                 for p in self.trainable_params:
                     tape.watch(p)
@@ -355,7 +355,6 @@ class Model(Layer):
 
     @property
     def trainable_params(self):
-        from neutro.autograd import Tensor as AutoTensor
         params = []
         for layer in self._get_all_layers():
             if getattr(layer, 'trainable', True):
@@ -380,7 +379,6 @@ class Model(Layer):
             else:
                 tensor_map[id(self.inputs)] = inputs
 
-            from ..layers.core.input_layer import InputLayer
             for node in self._nodes_ordered:
                 if isinstance(node.layer, InputLayer):
                     continue
@@ -392,7 +390,6 @@ class Model(Layer):
                     node_inputs = tensor_map.get(id(node.input_tensors))
 
                 output = node.layer.forward(node_inputs, training=training)
-                from neutro.autograd import as_tensor
                 node.layer._last_inputs = as_tensor(node_inputs)
                 node.layer._last_kwargs = {'training': training}
 
@@ -423,7 +420,6 @@ class Model(Layer):
 
     def generate(self, start_tokens, max_new_tokens, temperature=1.0):
         """Autoregressive generation with KV Caching."""
-        from ..layers.attention.kv_cache import KVCache
         cache = KVCache()
 
         # Start with the full prompt
@@ -466,7 +462,6 @@ class Model(Layer):
             # Initialize accumulators for shared layers
             layer_grads_accumulator = {}
 
-            from ..layers.core.input_layer import InputLayer
             for node in reversed(self._nodes_ordered):
                 if isinstance(node.layer, InputLayer):
                     continue
@@ -562,8 +557,7 @@ class Model(Layer):
 
     @staticmethod
     def _to_scalar(v):
-        from neutro.autograd import Tensor as AT
-        if isinstance(v, AT):
+        if isinstance(v, AutoTensor):
             return float(v.data)
         return float(v)
 

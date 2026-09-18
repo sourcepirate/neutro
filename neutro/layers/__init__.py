@@ -7,6 +7,8 @@ from .core.activation import Activation, ReLU, Softmax, Sigmoid, Tanh
 from .core.bitlinear import BitLinear
 from .core.reparameterization import Reparameterization
 from .core.moe import MoELayer
+from .core.lora import LoRADense, apply_lora
+from .core.qlora import QLoRADense, apply_qlora
 from .core.merging import Add, Concatenate, Multiply, Average, Maximum, Minimum
 from .convolutional.conv2d import Conv2D
 from .convolutional.conv1d import Conv1D

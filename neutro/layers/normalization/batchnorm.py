@@ -4,8 +4,8 @@ from neutro.autograd import Tensor
 
 
 class BatchNormalization(Layer):
-    def __init__(self, momentum=0.99, epsilon=1e-3):
-        super().__init__()
+    def __init__(self, momentum=0.99, epsilon=1e-3, **kwargs):
+        super().__init__(**kwargs)
         self.momentum = momentum
         self.epsilon = epsilon
         self.running_mean = None

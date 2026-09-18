@@ -35,7 +35,16 @@ def activation_quantize(x, bits=8, per_token=False, eps=1e-6):
 
 
 class BitLinear(Layer):
-    def __init__(self, units, mode='b1.58', activation_bits=8, use_bias=False, per_token=False, kernel_initializer='glorot_uniform', **kwargs):
+    def __init__(
+        self,
+        units,
+        mode="b1.58",
+        activation_bits=8,
+        use_bias=False,
+        per_token=False,
+        kernel_initializer="glorot_uniform",
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.units = units
         self.mode = mode
@@ -54,7 +63,7 @@ class BitLinear(Layer):
         super().build(input_shape)
 
     def compute_output_shape(self, input_shape):
-        return tuple(list(input_shape)[:-1] + [self.units])
+        return (*input_shape[:-1], self.units)
 
     def _layernorm_forward(self, x):
         self.ln_x = x
@@ -73,10 +82,11 @@ class BitLinear(Layer):
         return dx
 
     def _weight_quantize(self, W):
-        if self.mode == 'b1':
+        if self.mode == "b1":
             return weight_quantize_b1(W)
-        elif self.mode == 'b1.58':
+        if self.mode == "b1.58":
             return weight_quantize_b158(W)
+        raise ValueError(f"Unknown BitLinear mode '{self.mode}': expected 'b1' or 'b1.58'")
 
     def _activation_quantize(self, x):
         return activation_quantize(x, bits=self.activation_bits, per_token=self.per_token)

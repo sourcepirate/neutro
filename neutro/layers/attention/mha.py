@@ -1,12 +1,13 @@
-import numpy as np
 from .base_attention import BaseAttention
 from ...initializers import get as get_initializer
 from neutro.autograd import Tensor
 
 
 class MultiHeadAttention(BaseAttention):
-    def __init__(self, num_heads, key_dim):
-        super().__init__()
+    """Multi-head self-attention."""
+
+    def __init__(self, num_heads, key_dim, **kwargs):
+        super().__init__(**kwargs)
         self.num_heads = num_heads
         self.key_dim = key_dim
         self.head_dim = key_dim // num_heads
@@ -24,12 +25,18 @@ class MultiHeadAttention(BaseAttention):
         return x.reshape(batch_size, -1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
 
     def forward(self, query, value=None, key=None, mask=None, training=False, kv_cache=None, layer_id=None):
-        if value is None: value = query
-        if key is None: key = value
+        if value is None:
+            value = query
+        if key is None:
+            key = value
 
         batch_size = query.shape[0]
-        Q_raw, K_raw, V_raw = query @ self.params['Wq'], key @ self.params['Wk'], value @ self.params['Wv']
-        Q, K, V = self._split_heads(Q_raw, batch_size), self._split_heads(K_raw, batch_size), self._split_heads(V_raw, batch_size)
+        Q_raw = query @ self.params["Wq"]
+        K_raw = key @ self.params["Wk"]
+        V_raw = value @ self.params["Wv"]
+        Q = self._split_heads(Q_raw, batch_size)
+        K = self._split_heads(K_raw, batch_size)
+        V = self._split_heads(V_raw, batch_size)
 
         if kv_cache is not None and layer_id is not None:
             K, V = kv_cache.update(K, V, layer_id)

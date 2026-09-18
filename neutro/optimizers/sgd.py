@@ -1,12 +1,10 @@
 import numpy as np
-from .base import Optimizer
+
 from neutro.autograd import Tensor
 
+from .base import Optimizer, _get_data
+
 DEFAULT_LR = 0.01
-
-
-def _get_data(p):
-    return p.data if isinstance(p, Tensor) else p
 
 
 class SGD(Optimizer):
