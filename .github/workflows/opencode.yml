@@ -24,10 +24,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
-
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: opencode/deepseek-v4-flash-free
+          model: opencode-go/muse-spark-1.2-contributor
