@@ -23,6 +23,8 @@ class DropoutFunction(Function):
 
 
 class Dropout(Layer):
+    """Inverted dropout layer."""
+
     def __init__(self, rate, **kwargs):
         super().__init__(**kwargs)
         self.rate = rate
@@ -31,8 +33,9 @@ class Dropout(Layer):
         if not training or self.rate == 0:
             self.mask = None
             return inputs
-        mask_np = np.random.binomial(1, 1 - self.rate,
-                                     size=inputs.shape).astype(float) / (1 - self.rate)
+        mask_np = np.random.binomial(
+            1, 1 - self.rate, size=inputs.shape,
+        ).astype(float) / (1 - self.rate)
         self.mask = mask_np
         return DropoutFunction.apply(inputs, Tensor(mask_np))
 

@@ -1,6 +1,9 @@
+import math
+
 import numpy as np
+
 from ..base import Layer
-from ...utils.rope_utils import precompute_freqs_cis, apply_rotary_emb
+from ...utils.rope_utils import apply_rotary_emb, precompute_freqs_cis
 from neutro.autograd import Tensor, ops as autograd_ops
 
 
@@ -75,7 +78,7 @@ class PagedAttention(Layer):
         self.block_size = block_size
         self.dropout_rate = dropout
         self.use_rope = use_rope
-        self.scale = float(1.0 / np.sqrt(self.head_dim))
+        self.scale = float(1.0 / math.sqrt(self.head_dim))
 
     def build(self, input_shape):
         self.embed_dim = input_shape[-1]

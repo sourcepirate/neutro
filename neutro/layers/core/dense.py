@@ -1,4 +1,3 @@
-import numpy as np
 from ..base import Layer
 from ...initializers import get as get_initializer
 from ...activations import get as get_activation

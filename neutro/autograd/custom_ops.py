@@ -1,4 +1,7 @@
 import numpy as np
+
+from neutro.utils.conv_utils import col2im_indices, im2col_indices
+
 from .function import Function
 
 
@@ -36,7 +39,6 @@ class QuantizeSTE(Function):
 class Conv2DFunction(Function):
     @staticmethod
     def forward(ctx, inputs, W, b, kernel_size, strides, padding):
-        from neutro.utils.conv_utils import im2col_indices
         batch, h, w, c = inputs.shape
         kh, kw = kernel_size
         sh, sw = strides
@@ -62,7 +64,6 @@ class Conv2DFunction(Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        from neutro.utils.conv_utils import col2im_indices
         x_shape = ctx.saved_data['x_shape']
         x_cols = ctx.saved_data['x_cols']
         W = ctx.saved_data['W']
@@ -89,7 +90,6 @@ class Conv2DFunction(Function):
 class MaxPool2DFunction(Function):
     @staticmethod
     def forward(ctx, inputs, pool_size, strides):
-        from neutro.utils.conv_utils import im2col_indices
         batch, h, w, c = inputs.shape
         ph, pw = pool_size
         sh, sw = strides
@@ -109,7 +109,6 @@ class MaxPool2DFunction(Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        from neutro.utils.conv_utils import col2im_indices
         arg_max = ctx.saved_data['arg_max']
         x_cols_shape = ctx.saved_data['x_cols_shape']
         oh, ow = ctx.saved_data['oh'], ctx.saved_data['ow']
@@ -129,7 +128,6 @@ class MaxPool2DFunction(Function):
 class Conv1DFunction(Function):
     @staticmethod
     def forward(ctx, inputs, W, b, kernel_size, strides, padding):
-        from neutro.utils.conv_utils import im2col_indices
         batch, steps, c = inputs.shape
         k = kernel_size[0]
         s = strides[0]
@@ -154,7 +152,6 @@ class Conv1DFunction(Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        from neutro.utils.conv_utils import col2im_indices
         x_cols = ctx.saved_data['x_cols']
         W = ctx.saved_data['W']
         k, c, f = ctx.saved_data['k'], ctx.saved_data['c'], ctx.saved_data['f']

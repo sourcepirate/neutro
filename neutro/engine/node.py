@@ -1,6 +1,3 @@
-import numpy as np
-
-
 class KerasTensor:
     """Symbolic representation of a tensor in the functional API."""
 

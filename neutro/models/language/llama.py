@@ -1,13 +1,10 @@
-import numpy as np
 from ..base_model import Sequential
+from ...activations.silu import SiLU
 from ...layers.base import Layer
 from ...layers.attention.flash_attention import FlashAttention
-from ...layers.normalization.rmsnorm import RMSNorm
 from ...layers.core.dense import Dense
-from ...layers.core.activation import Activation
 from ...layers.embedding.embedding import Embedding
-from ...activations.silu import SiLU
-from ...utils.rope_utils import precompute_freqs_cis, apply_rotary_emb
+from ...layers.normalization.rmsnorm import RMSNorm
 
 class LlamaMLP(Layer):
     """

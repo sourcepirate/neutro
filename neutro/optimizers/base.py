@@ -1,6 +1,13 @@
 from typing import List
 
 
+def _get_data(param):
+    """Unwrap Tensor to ndarray, pass through ndarray."""
+    from neutro.autograd import Tensor
+
+    return param.data if isinstance(param, Tensor) else param
+
+
 class Optimizer:
     """Base class for all optimizers."""
 

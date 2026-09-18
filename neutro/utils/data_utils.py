@@ -1,9 +1,9 @@
-import os
-import urllib.request
-import gzip
-import numpy as np
-import ssl
 import json
+import os
+import ssl
+import urllib.request
+
+import numpy as np
 
 def download_file(url, filename):
     if not os.path.exists(filename):
@@ -24,11 +24,11 @@ def load_mnist():
     download_file(base_url, path)
     
     with np.load(path, allow_pickle=True) as f:
-        x_train, y_train = f['x_test'], f['y_test'] # Use test set as training for faster demo if needed, but let's use full
         x_train, y_train = f['x_train'], f['y_train']
         x_test, y_test = f['x_test'], f['y_test']
-        
+
     return (x_train, y_train), (x_test, y_test)
+
 
 def load_wikitext2():
     """Loads the WikiText-2 dataset."""

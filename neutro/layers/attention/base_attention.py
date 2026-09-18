@@ -4,8 +4,8 @@ from neutro.autograd import Tensor, ops as autograd_ops
 
 
 class BaseAttention(Layer):
-    def __init__(self, scale=None):
-        super().__init__()
+    def __init__(self, scale=None, **kwargs):
+        super().__init__(**kwargs)
         self.scale = scale
 
     def scaled_dot_product_attention(self, q, k, v, mask=None):

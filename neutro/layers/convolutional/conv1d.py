@@ -1,4 +1,3 @@
-import numpy as np
 from ..base import Layer
 from ...initializers import get as get_initializer
 from ...activations import get as get_activation
@@ -7,10 +6,24 @@ from neutro.autograd.custom_ops import Conv1DFunction
 
 
 class Conv1D(Layer):
-    def __init__(self, filters, kernel_size, strides=1, padding='valid', activation=None, kernel_initializer='glorot_uniform', bias_initializer='zeros', **kwargs):
+    """1-D convolution layer."""
+
+    def __init__(
+        self,
+        filters,
+        kernel_size,
+        strides=1,
+        padding="valid",
+        activation=None,
+        kernel_initializer="glorot_uniform",
+        bias_initializer="zeros",
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.filters = filters
-        self.kernel_size = kernel_size if isinstance(kernel_size, (tuple, list)) else (kernel_size,)
+        self.kernel_size = (
+            kernel_size if isinstance(kernel_size, (tuple, list)) else (kernel_size,)
+        )
         self.strides = strides if isinstance(strides, (tuple, list)) else (strides,)
         self.padding = padding
         self.activation = get_activation(activation)
@@ -29,14 +42,16 @@ class Conv1D(Layer):
         k = self.kernel_size[0]
         s = self.strides[0]
         padding = 0
-        if self.padding == 'same':
+        if self.padding == "same":
             padding = (k - 1) // 2
-        out_steps = (steps + 2*padding - k) // s + 1
+        out_steps = (steps + 2 * padding - k) // s + 1
         return (batch, out_steps, self.filters)
 
     def forward(self, inputs, training=False):
-        out = Conv1DFunction.apply(inputs, self.params['W'], self.params['b'],
-                                    self.kernel_size, self.strides, self.padding)
+        out = Conv1DFunction.apply(
+            inputs, self.params["W"], self.params["b"],
+            self.kernel_size, self.strides, self.padding,
+        )
         if self.activation:
             out = self.activation(out)
         return out

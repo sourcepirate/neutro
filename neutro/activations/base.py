@@ -1,6 +1,3 @@
-from neutro.autograd import Tensor as AutogradTensor
-
-
 class Activation:
     """Base class for activation functions."""
 

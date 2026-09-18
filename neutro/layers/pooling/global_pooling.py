@@ -1,4 +1,3 @@
-import numpy as np
 from ..base import Layer
 from neutro.autograd import Tensor, ops as autograd_ops
 

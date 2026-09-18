@@ -1,7 +1,5 @@
 import numpy as np
 
-from neutro.autograd import Tensor
-
 
 class Loss:
     """Base class for all losses."""

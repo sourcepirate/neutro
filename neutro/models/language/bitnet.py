@@ -1,4 +1,3 @@
-import numpy as np
 from ..base_model import Sequential
 from ...layers.embedding.embedding import Embedding
 from ...layers.normalization.rmsnorm import RMSNorm
@@ -6,7 +5,8 @@ from ...layers.core.dense import Dense
 from ...layers.transformer.bitnet_block import BitNetBlock
 
 
-def BitNetTiny(vocab_size, seq_len, dim=512, n_layers=4, n_heads=8, mode='b1.58', activation_bits=8):
+def BitNetTiny(vocab_size, seq_len, dim=512, n_layers=4, n_heads=8, mode="b1.58", activation_bits=8):
+    """Tiny BitNet language model (binary / ternary weights)."""
     model = Sequential([
         Embedding(vocab_size, dim, input_shape=(seq_len,)),
     ])

@@ -1,14 +1,14 @@
 from ..base_model import Model
 from ...layers.convolutional.conv2d import Conv2D
 from ...layers.core.merging import Concatenate
-from ...layers.pooling.upsampling2d import UpSampling2D
-from ...layers.pooling.maxpooling2d import MaxPooling2D
 from ...layers.embedding.time_embedding import TimeEmbedding
+from ...layers.pooling.maxpooling2d import MaxPooling2D
+from ...layers.pooling.upsampling2d import UpSampling2D
+
 
 class UNet(Model):
-    """
-    Simplified UNet for Diffusion.
-    """
+    """Simplified UNet for diffusion."""
+
     def __init__(self, input_channels, base_filters=64, time_dim=256):
         super().__init__()
         self.time_embedding = TimeEmbedding(time_dim)
@@ -47,12 +47,13 @@ class UNet(Model):
         self.built = True
 
     def forward(self, inputs, training=False):
+        """Forward pass.
+
+        Args:
+            inputs: ``[x, t]`` where ``x`` is image and ``t`` is timestep.
         """
-        inputs: [x, t] where x is image and t is timestep
-        """
-        x, t = inputs
-        # t_emb = self.time_embedding(t) # Time conditioning not fully integrated in this simple version
-        
+        x, _t = inputs
+
         # Encoder
         h1 = self.enc1(x, training)
         p1 = self.pool1(h1)

@@ -1,6 +1,7 @@
 import numpy as np
+
 from ..base import Layer
-from ..core.dense import Dense
+from .dense import Dense
 
 class MoELayer(Layer):
     """
@@ -43,19 +44,17 @@ class MoELayer(Layer):
         # x: (batch, seq_len, dim) or (batch, dim)
         self.x_shape = x.shape
         self.x_flat = x.reshape(-1, self.input_dim)
-        num_tokens = self.x_flat.shape[0]
-        
+
         # 1. Routing scores
         router_logits = self.x_flat @ self.params['router_weight']
         # Softmax to get probabilities
         router_probs = np.exp(router_logits - np.max(router_logits, axis=-1, keepdims=True))
         router_probs /= np.sum(router_probs, axis=-1, keepdims=True)
         self.router_probs = router_probs
-        
+
         # 2. Select top-k experts
         # indices: (num_tokens, top_k)
         top_k_indices = np.argsort(router_probs, axis=-1)[:, -self.top_k:]
-        self.top_k_indices = top_k_indices
         
         # 3. Dispatch to experts and combine results
         final_output = np.zeros_like(self.x_flat)
@@ -86,7 +85,6 @@ class MoELayer(Layer):
 
     def backward(self, grad_output):
         grad_flat = grad_output.reshape(-1, self.input_dim)
-        num_tokens = self.x_flat.shape[0]
         
         dx_flat = np.zeros_like(self.x_flat)
         drouter_logits = np.zeros_like(self.router_probs)

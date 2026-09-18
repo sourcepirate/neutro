@@ -1,6 +1,6 @@
 import numpy as np
 from ..base import Layer
-from neutro.autograd import Tensor as AutoTensor
+from neutro.autograd import Tensor
 
 
 class TimeEmbedding(Layer):
@@ -30,4 +30,4 @@ class TimeEmbedding(Layer):
         emb = np.concatenate([np.sin(emb), np.cos(emb)], axis=1)
         if self.dim % 2 == 1:
             emb = np.pad(emb, ((0, 0), (0, 1)))
-        return AutoTensor(emb)
+        return Tensor(emb)

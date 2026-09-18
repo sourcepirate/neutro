@@ -1,5 +1,5 @@
 from ..base import Layer
-from neutro.autograd import Tensor, ops as autograd_ops
+from neutro.autograd import ops as autograd_ops
 
 
 class UpSampling2D(Layer):

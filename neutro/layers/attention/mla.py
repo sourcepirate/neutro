@@ -1,4 +1,5 @@
-import numpy as np
+import math
+
 from ..base import Layer
 from ..core.dense import Dense
 from neutro.autograd import Tensor, ops as autograd_ops
@@ -29,7 +30,7 @@ class MultiHeadLatentAttention(Layer):
         self.head_dim = head_dim
         self.latent_dim = latent_dim
         self.kv_latent_dim = kv_latent_dim
-        self.scale = float(1.0 / np.sqrt(head_dim))
+        self.scale = float(1.0 / math.sqrt(head_dim))
 
     def build(self, input_shape):
         self.embed_dim = input_shape[-1]

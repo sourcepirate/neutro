@@ -1,4 +1,3 @@
-import numpy as np
 from .base import Activation
 from neutro.autograd import ops as autograd_ops
 
