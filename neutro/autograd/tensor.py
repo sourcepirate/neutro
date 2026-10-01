@@ -8,6 +8,7 @@ def as_tensor(x):
         return [as_tensor(i) for i in x]
     if isinstance(x, np.ndarray):
         return Tensor(x)
+    # np.asarray handles scalars, nested lists and numpy scalars robustly
     return Tensor(np.asarray(x))
 
 
@@ -15,18 +16,38 @@ class Tensor:
     __slots__ = ('data', 'grad')
 
     def __init__(self, data):
-        self.data = np.asarray(data, dtype=float)
+        if data is None:
+            raise ValueError("Tensor data cannot be None")
+        # Preserve float64 for autograd; copy only if needed
+        arr = np.asarray(data)
+        if arr.dtype != np.float64:
+            # allow integer inputs but cast to float for grad stability
+            # need copy only when casting
+            arr = arr.astype(float, copy=False)
+        else:
+            # ensure we own array if needed - make contiguous for perf
+            arr = np.array(arr, dtype=float, copy=False, subok=False)
+        self.data = arr
         self.grad = None
 
-    __hash__ = object.__hash__
+    def __hash__(self):
+        # Identity-based hash so Tensor can be used as dict key despite overriding __eq__
+        return object.__hash__(self)
 
     def __array__(self, dtype=None):
         if dtype is None:
             return self.data
-        return self.data.astype(dtype)
+        return self.data.astype(dtype, copy=False)
 
     def __bool__(self):
-        return bool(self.data)
+        # Mimic numpy: only allow truth testing for 0-d or single-element tensors,
+        # otherwise raise to avoid silent bugs (e.g., `if tensor:`).
+        if self.data.size == 1:
+            return bool(self.data.item())
+        raise ValueError(
+            "The truth value of a Tensor with more than one element is ambiguous. "
+            "Use `tensor.data.size` or `tensor.data.any()` / `tensor.data.all()`."
+        )
 
     def zero_grad(self):
         self.grad = None
@@ -168,4 +189,26 @@ class Tensor:
         return slice_op(self, idx)
 
     def __setitem__(self, idx, value):
-        self.data[idx] = np.asarray(value) if isinstance(value, Tensor) else value
+        # Direct data mutation bypasses autograd; clear grad to avoid stale grads
+        val = value.data if isinstance(value, Tensor) else value
+        self.data[idx] = val
+        # Mutation invalidates any previously computed grad for this tensor
+        self.grad = None
+
+    @property
+    def dtype(self):
+        return self.data.dtype
+
+    def __len__(self):
+        if self.data.shape == ():
+            raise TypeError("len() of unsized object Tensor with scalar shape")
+        return self.data.shape[0]
+
+    def astype(self, dtype):
+        return Tensor(self.data.astype(dtype))
+
+    # Prevent accidental iteration which would bypass autograd
+    def __iter__(self):
+        # Allow iteration over first axis but return numpy scalars/arrays, not Tensor slices
+        # Users should use slice_op via __getitem__ for differentiable slicing
+        return iter(self.data)
