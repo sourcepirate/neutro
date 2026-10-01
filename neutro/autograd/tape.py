@@ -1,27 +1,33 @@
+"""GradientTape: record ops and compute gradients via reverse-mode autodiff."""
+
 import numpy as np
 
-_tape_stack = []
+_tape_stack: list["GradientTape"] = []
 
 
 def get_active_tape():
+    """Return the currently active tape, or ``None``."""
     return _tape_stack[-1] if _tape_stack else None
 
 
 class GradientTape:
+    """Context manager that records differentiable ops."""
+
     def __init__(self):
-        self._ops = []
-        self._watched = set()
+        self._ops: list[dict] = []
+        self._watched: set = set()
+
+    # -- Context manager ----------------------------------------------------
 
     def __enter__(self):
         _tape_stack.append(self)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Robust stack handling: ensure we pop the correct tape even if exceptions occurred
         if not _tape_stack:
             return False
         if _tape_stack[-1] is not self:
-            # Mismatched nesting - remove self wherever it is to avoid corruption
+            # Unbalanced nesting (e.g. exception): remove ourselves gracefully.
             try:
                 _tape_stack.remove(self)
             except ValueError:
@@ -30,104 +36,116 @@ class GradientTape:
             _tape_stack.pop()
         return False
 
+    # -- Recording ----------------------------------------------------------
+
     def watch(self, tensor):
-        # Accept single Tensor or iterable of Tensors for convenience
+        """Mark ``tensor`` (or iterable of tensors) as watched."""
         if isinstance(tensor, (list, tuple, set)):
-            for t in tensor:
-                self.watch(t)
+            for item in tensor:
+                self.watch(item)
             return
-        # Late import to avoid circular
+
         from .tensor import Tensor as TensorClass
         if not isinstance(tensor, TensorClass):
             raise TypeError(f"GradientTape.watch expects Tensor, got {type(tensor)}")
         self._watched.add(tensor)
 
-    def _record_op(self, inputs, output, backward_fn, name=''):
-        # Defensive copy of inputs to avoid external mutation
+    def _record_op(self, inputs, output, backward_fn, name=""):
         self._ops.append({
-            'inputs': list(inputs),
-            'output': output,
-            'backward': backward_fn,
-            'name': name,
+            "inputs": list(inputs),  # defensive copy
+            "output": output,
+            "backward": backward_fn,
+            "name": name,
         })
         self._watched.add(output)
 
+    # -- Differentiation ----------------------------------------------------
+
     def gradient(self, target, sources):
+        """Compute ``d target / d sources``.
+
+        Returns a list aligned with ``sources`` (entries ``None`` if no path).
+        """
         from .tensor import Tensor as TensorClass
+
+        sources = self._normalize_sources(sources, TensorClass)
         if not isinstance(target, TensorClass):
-            raise TypeError(f"GradientTape.gradient target must be Tensor, got {type(target)}")
-        # Normalize sources to list
-        if isinstance(sources, TensorClass):
-            sources = [sources]
-        else:
-            try:
-                sources = list(sources)
-            except TypeError:
-                raise TypeError("sources must be Tensor or iterable of Tensors")
-        for s in sources:
-            if not isinstance(s, TensorClass):
-                raise TypeError(f"GradientTape.gradient source must be Tensor, got {type(s)}")
+            raise TypeError(f"gradient target must be Tensor, got {type(target)}")
 
-        # Fast path: no ops or target not computed within tape -> all grads None
-        # Use identity mapping from Tensor id to array
-        grad = {target: np.ones_like(target.data, dtype=float)}
+        # Seed gradient: d target / d target = 1
+        grad_table: dict = {target: np.ones_like(target.data, dtype=float)}
 
-        # Reverse topological order is the recorded order reversed; _ops already in forward order
         for op in reversed(self._ops):
-            out = op['output']
-            if out not in grad:
+            output = op["output"]
+            if output not in grad_table:
                 continue
-            upstream = grad[out]
-            # Backward may return None for non-differentiable inputs
+
+            upstream = grad_table[output]
+
             try:
-                input_grads = op['backward'](upstream)
-            except Exception as e:
-                raise RuntimeError(f"Backward failed for op '{op['name']}': {e}") from e
+                input_grads = op["backward"](upstream)
+            except Exception as exc:
+                raise RuntimeError(f"Backward failed for op '{op['name']}': {exc}") from exc
 
             if input_grads is None:
                 continue
             if not isinstance(input_grads, (list, tuple)):
                 input_grads = [input_grads]
 
-            # Robust length handling: if mismatch, pad with None or truncate
-            inputs = op['inputs']
-            if len(input_grads) != len(inputs):
-                # If backward returned fewer gradients than inputs, assume trailing Nones
-                # This protects against silent zip truncation bugs
-                if len(input_grads) < len(inputs):
-                    input_grads = list(input_grads) + [None] * (len(inputs) - len(input_grads))
-                else:
-                    input_grads = input_grads[:len(inputs)]
+            input_grads = self._align_grad_lengths(input_grads, op["inputs"])
+            self._accumulate_grads(grad_table, op["inputs"], input_grads)
 
-            for inp, ig in zip(inputs, input_grads):
-                if ig is None:
-                    continue
-                # Ensure array type and shape sanity before accumulation
-                ig = np.asarray(ig, dtype=float)
-                if inp in grad:
-                    # Use out-of-place addition to avoid mutating shared references
-                    # Accumulate gradients from multiple consumers
-                    grad[inp] = grad[inp] + ig
-                else:
-                    grad[inp] = ig
+        return self._collect_source_grads(grad_table, sources)
 
+    # -- Helpers ------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_sources(sources, tensor_cls):
+        if isinstance(sources, tensor_cls):
+            return [sources]
+        try:
+            sources = list(sources)
+        except TypeError as exc:
+            raise TypeError("sources must be Tensor or iterable of Tensors") from exc
+        for src in sources:
+            if not isinstance(src, tensor_cls):
+                raise TypeError(f"gradient source must be Tensor, got {type(src)}")
+        return sources
+
+    @staticmethod
+    def _align_grad_lengths(grads, inputs):
+        """Pad/truncate ``grads`` to match ``inputs``."""
+        if len(grads) == len(inputs):
+            return grads
+        if len(grads) < len(inputs):
+            return list(grads) + [None] * (len(inputs) - len(grads))
+        return list(grads[:len(inputs)])
+
+    @staticmethod
+    def _accumulate_grads(grad_table, inputs, input_grads):
+        for inp, ig in zip(inputs, input_grads):
+            if ig is None:
+                continue
+            ig = np.asarray(ig, dtype=float)
+            if inp in grad_table:
+                grad_table[inp] = grad_table[inp] + ig  # out-of-place to avoid aliasing
+            else:
+                grad_table[inp] = ig
+
+    @staticmethod
+    def _collect_source_grads(grad_table, sources):
         grads = []
         for src in sources:
-            g = grad.get(src)
-            # Ensure grad array does not share memory with internal dict that could be mutated later
-            if g is not None:
-                # Copy to avoid aliasing where same tensor is source multiple times
-                # but keep efficiency by not copying unnecessarily if single use
-                src.grad = g  # keep reference; caller gets same array
-            else:
-                src.grad = None
-            grads.append(src.grad)
+            grad = grad_table.get(src)
+            src.grad = grad
+            grads.append(grad)
         return grads
+
+    # -- Utilities ----------------------------------------------------------
 
     def reset(self):
         self._ops.clear()
         self._watched.clear()
 
     def watched_variables(self):
-        # Helper for debugging / inspection
         return list(self._watched)

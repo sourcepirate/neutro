@@ -1,78 +1,86 @@
-import numpy as np
-from .tensor import Tensor
-from .function import Function
+"""Differentiable operations built on :class:`Function`.
 
+Each op defines a ``forward`` (numpy) and ``backward`` (gradient) pair.
+Public helpers (``add``, ``matmul``, ``_sum``, …) handle ``Tensor`` wrapping
+and validation.
+"""
+
+import numpy as np
+
+from .function import Function
+from .tensor import Tensor
+
+# ---------------------------------------------------------------------------
+# Conversion
+# ---------------------------------------------------------------------------
 
 def _ensure_tensor(x):
-    if isinstance(x, Tensor):
-        return x
-    return Tensor(np.asarray(x))
+    return x if isinstance(x, Tensor) else Tensor(np.asarray(x))
 
 
-# ------------------------------------------------------------------
-# Helpers for axis handling
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
 def _normalize_axis(axis, ndim):
+    """Normalize ``axis`` to a tuple of non-negative, unique axes."""
     if axis is None:
         return None
     if isinstance(axis, int):
         axis = (axis,)
     else:
         axis = tuple(axis)
-    # normalize negative
+
     axis = tuple(a if a >= 0 else a + ndim for a in axis)
-    # validate
+
     for a in axis:
         if not 0 <= a < ndim:
             raise ValueError(f"axis {a} out of bounds for ndim {ndim}")
-    # unique sorted
     if len(set(axis)) != len(axis):
         raise ValueError(f"repeated axis in {axis}")
-    return axis
+    return tuple(sorted(axis))
 
 
-def _expand_grad_to_shape(g, x_shape, axis, keepdims):
-    """
-    Broadcast gradient g back to x_shape for reduction ops (sum/mean/max).
-    g is the upstream gradient with shape equal to reduced shape.
+def _expand_grad_to_shape(grad, x_shape, axis, keepdims):
+    """Broadcast ``grad`` (reduced) back to ``x_shape``.
+
+    Used by ``sum`` / ``mean`` / ``max`` backward passes.
     """
     x_shape = tuple(x_shape)
+    grad = np.asarray(grad)
+
     if axis is None:
-        # g is scalar (0-d) or shape () -> broadcast to x_shape
-        return np.broadcast_to(np.asarray(g), x_shape).copy()
+        return np.broadcast_to(grad, x_shape).copy()
 
     axes = _normalize_axis(axis, len(x_shape))
     if keepdims:
-        # g already has ndim == len(x_shape) with 1s at reduced axes
-        return np.broadcast_to(np.asarray(g), x_shape).copy()
-    else:
-        # Need to insert singleton dims at reduced axes
-        g_arr = np.asarray(g)
-        # Build expanded shape where reduced axes are 1
-        # g_arr ndim == len(x_shape) - len(axes)
-        expanded_shape = []
-        g_idx = 0
-        axes_set = set(axes)
-        for i in range(len(x_shape)):
-            if i in axes_set:
-                expanded_shape.append(1)
-            else:
-                expanded_shape.append(g_arr.shape[g_idx])
-                g_idx += 1
-        g_reshaped = g_arr.reshape(expanded_shape)
-        return np.broadcast_to(g_reshaped, x_shape).copy()
+        return np.broadcast_to(grad, x_shape).copy()
+
+    # Need to re-insert singleton dims at reduced axes
+    expanded = []
+    g_idx = 0
+    axes_set = set(axes)
+    for dim in range(len(x_shape)):
+        if dim in axes_set:
+            expanded.append(1)
+        else:
+            expanded.append(grad.shape[g_idx])
+            g_idx += 1
+
+    return np.broadcast_to(grad.reshape(expanded), x_shape).copy()
 
 
 def _swap_last_two(x):
-    if x.ndim < 2:
-        return x
-    return np.swapaxes(x, -1, -2)
+    return np.swapaxes(x, -1, -2) if x.ndim >= 2 else x
 
+
+# ---------------------------------------------------------------------------
+# Arithmetic
+# ---------------------------------------------------------------------------
 
 class _Add(Function):
     @staticmethod
     def forward(ctx, a, b):
-        # No need to save a,b for backward (gradient is just upstream)
         return a + b
 
     @staticmethod
@@ -98,7 +106,7 @@ class _Mul(Function):
 
     @staticmethod
     def backward(ctx, g):
-        a, b = ctx.saved_data['a'], ctx.saved_data['b']
+        a, b = ctx.saved_data["a"], ctx.saved_data["b"]
         return g * b, g * a
 
 
@@ -110,8 +118,7 @@ class _Div(Function):
 
     @staticmethod
     def backward(ctx, g):
-        a, b = ctx.saved_data['a'], ctx.saved_data['b']
-        # Avoid division by zero issues; b is numpy array
+        a, b = ctx.saved_data["a"], ctx.saved_data["b"]
         return g / b, -g * a / (b ** 2)
 
 
@@ -133,11 +140,52 @@ class _Pow(Function):
 
     @staticmethod
     def backward(ctx, g):
-        x, k = ctx.saved_data['x'], ctx.saved_data['k']
-        # Handle k == 0 separately to avoid x**( -1 ) for x==0
+        x, k = ctx.saved_data["x"], ctx.saved_data["k"]
         if k == 0:
             return np.zeros_like(x, dtype=float) * g
         return k * (x ** (k - 1)) * g
+
+
+# ---------------------------------------------------------------------------
+# Matmul
+# ---------------------------------------------------------------------------
+
+def _matmul_vec_mat_left(a, b, g):
+    """Gradients for ``a (K,) @ b (...,K,N) -> (...,N)``."""
+    # gb[...,k,n] = a[k] * g[...,n]
+    batch_shape = b.shape[:-2]
+    if not batch_shape:
+        ga = b @ g
+        gb = np.outer(a, g)
+        return ga, gb
+
+    # Batched: accumulate ga over batch, gb per-batch outer
+    gb = np.empty_like(b, dtype=float)
+    ga = np.zeros_like(a, dtype=float)
+    for idx in np.ndindex(batch_shape):
+        b_slice = b[idx]
+        g_slice = g[idx]
+        gb[idx] = np.outer(a, g_slice)
+        ga += b_slice @ g_slice
+    return ga, gb
+
+
+def _matmul_mat_vec_right(a, b, g):
+    """Gradients for ``a (...,M,K) @ b (K,) -> (...,M)``."""
+    batch_shape = a.shape[:-2]
+    if not batch_shape:
+        ga = np.outer(g, b)
+        gb = a.T @ g
+        return ga, gb
+
+    gb = np.zeros_like(b, dtype=float)
+    ga = np.empty_like(a, dtype=float)
+    for idx in np.ndindex(batch_shape):
+        a_slice = a[idx]
+        g_slice = g[idx]
+        ga[idx] = np.outer(g_slice, b)
+        gb += a_slice.T @ g_slice
+    return ga, gb
 
 
 class _Matmul(Function):
@@ -148,64 +196,29 @@ class _Matmul(Function):
 
     @staticmethod
     def backward(ctx, g):
-        a, b = ctx.saved_data['a'], ctx.saved_data['b']
-        # Handle vector cases explicitly
+        a, b = ctx.saved_data["a"], ctx.saved_data["b"]
+
+        # Vector-vector
         if a.ndim == 1 and b.ndim == 1:
-            # dot product: a (K,) @ b (K,) -> scalar, g scalar
-            # ga = g * b, gb = g * a
             return g * b, g * a
-        elif a.ndim == 1 and b.ndim >= 2:
-            # a (K,) @ b (..., K, N) -> (..., N)
-            # For simplicity promote a to (1, K) and use generic formula, then squeeze
-            # But generic _swap_last_two path also works if we promote g?
-            # Use einsum for correctness: ga = b @ g? For non-batched: b (K,N) @ g (N,) -> (K,)
-            # So ga = b @ g, gb = outer(a, g)
-            # For batched, use tensordot / matmul with broadcasting
-            # Fallback to generic with expanded dims
-            # Promote a
-            # We'll compute ga via matmul(b, g_expanded)
-            # Simpler: use np.matmul with swapped axes after expanding a
-            a_exp = a[np.newaxis, :]  # (1, K)
-            # g may be batched: need to handle batch dims
-            # If b is 2D and g is 1D, simple:
-            if b.ndim == 2 and g.ndim == 1:
-                ga = b @ g  # (K,)
-                gb = np.outer(a, g)  # (K, N)
-                return ga, gb
-            # For higher dims, fallback to generic with swapaxes after promoting
-            # Generic fallback: treat as batched matmul with leading batch
-            ga = np.matmul(g, _swap_last_two(b)) if g.ndim >= 1 and b.ndim >= 2 else g * b
-            # ga currently shape (..., K) but may have extra leading 1 from a promotion
-            # Need to squeeze the leading 1 if added
-            if ga.ndim > 1 and ga.shape[0] == 1 and a.ndim == 1:
-                # heuristic squeeze first dim if it was added
-                # Actually ga from g @ b.T where b shape (K,N) -> g shape (N,) -> g @ b.T = (K,) without leading
-                pass
-            gb = np.matmul(a_exp.T, g[np.newaxis, :] if g.ndim == 1 else g) if g.ndim >= 1 else np.outer(a, g)
-            # gb shape currently (K, N) or (..., K, N) - may need to handle batch
-            return ga, gb
-        elif b.ndim == 1 and a.ndim >= 2:
-            # a (..., M, K) @ b (K,) -> (..., M)
-            if a.ndim == 2 and g.ndim == 1:
-                ga = np.outer(g, b)  # (M, K)
-                gb = a.T @ g  # (K,)
-                return ga, gb
-            # Batched fallback
-            ga = np.matmul(g[..., None], b[None, :]) if g.ndim >= 1 else g * b
-            # g[..., None] shape (..., M, 1) @ b[None,:] (1, K) -> (..., M, K) ?
-            # Use generic swap method
-            ga_generic = np.matmul(g[..., None], _swap_last_two(b)[None, :]) if False else None
-            # For robustness use swap_last_two generic
-            # Recompute using generic but with vector handling
-            ga = g[..., None] * b if g.ndim >= 1 else g * b  # outer
-            gb = np.matmul(_swap_last_two(a), g[..., None]).squeeze(-1) if a.ndim >=2 else g * a
+
+        # Matrix / batched matrix (both >=2D) – generic formula
+        if a.ndim >= 2 and b.ndim >= 2:
+            ga = np.matmul(g, _swap_last_two(b))
+            gb = np.matmul(_swap_last_two(a), g)
             return ga, gb
 
-        # Generic case: both ndim >=2 (includes batched)
-        ga = np.matmul(g, _swap_last_two(b))
-        gb = np.matmul(_swap_last_two(a), g)
-        return ga, gb
+        # Vector-matrix
+        if a.ndim == 1:
+            return _matmul_vec_mat_left(a, b, g)
 
+        # Matrix-vector
+        return _matmul_mat_vec_right(a, b, g)
+
+
+# ---------------------------------------------------------------------------
+# Reductions
+# ---------------------------------------------------------------------------
 
 class _Sum(Function):
     @staticmethod
@@ -215,7 +228,9 @@ class _Sum(Function):
 
     @staticmethod
     def backward(ctx, g):
-        x_shape, axis, keepdims = ctx.saved_data['x_shape'], ctx.saved_data['axis'], ctx.saved_data['keepdims']
+        x_shape = ctx.saved_data["x_shape"]
+        axis = ctx.saved_data["axis"]
+        keepdims = ctx.saved_data["keepdims"]
         return _expand_grad_to_shape(g, x_shape, axis, keepdims)
 
 
@@ -227,17 +242,45 @@ class _Mean(Function):
         else:
             axes = _normalize_axis(axis, x.ndim)
             n = int(np.prod([x.shape[d] for d in axes]))
-            # Save normalized axis for backward
             axis = axes if isinstance(axis, (tuple, list)) else axis
         ctx.save_for_backward(x_shape=x.shape, axis=axis, keepdims=keepdims, n=n)
         return np.mean(x, axis=axis, keepdims=keepdims)
 
     @staticmethod
     def backward(ctx, g):
-        x_shape, axis, keepdims, n = ctx.saved_data['x_shape'], ctx.saved_data['axis'], ctx.saved_data['keepdims'], ctx.saved_data['n']
-        gx = _expand_grad_to_shape(g, x_shape, axis, keepdims)
-        return gx / n
+        x_shape = ctx.saved_data["x_shape"]
+        axis = ctx.saved_data["axis"]
+        keepdims = ctx.saved_data["keepdims"]
+        n = ctx.saved_data["n"]
+        return _expand_grad_to_shape(g, x_shape, axis, keepdims) / n
 
+
+class _Max(Function):
+    @staticmethod
+    def forward(ctx, x, axis, keepdims):
+        ctx.save_for_backward(x=x, axis=axis, keepdims=keepdims)
+        return np.max(x, axis=axis, keepdims=keepdims)
+
+    @staticmethod
+    def backward(ctx, g):
+        x, axis, keepdims = ctx.saved_data["x"], ctx.saved_data["axis"], ctx.saved_data["keepdims"]
+        x_max = np.max(x, axis=axis, keepdims=True)
+        mask = (x == x_max).astype(float)
+
+        # Split ties equally
+        if axis is None:
+            mask /= np.clip(mask.sum(), 1e-15, None)
+            return g * mask
+
+        s = np.clip(mask.sum(axis=axis, keepdims=True), 1e-15, None)
+        mask /= s
+        grad_expanded = _expand_grad_to_shape(g, x.shape, axis, keepdims)
+        return grad_expanded * mask
+
+
+# ---------------------------------------------------------------------------
+# Shape ops
+# ---------------------------------------------------------------------------
 
 class _Transpose(Function):
     @staticmethod
@@ -246,7 +289,6 @@ class _Transpose(Function):
             axes = tuple(range(x.ndim - 1, -1, -1))
         else:
             axes = tuple(axes)
-            # Normalize negative axes
             axes = tuple(a if a >= 0 else a + x.ndim for a in axes)
             if len(axes) != x.ndim:
                 raise ValueError(f"transpose axes length {len(axes)} must match ndim {x.ndim}")
@@ -258,7 +300,7 @@ class _Transpose(Function):
 
     @staticmethod
     def backward(ctx, g):
-        return np.transpose(g, ctx.saved_data['inv_axes'])
+        return np.transpose(g, ctx.saved_data["inv_axes"])
 
 
 class _Reshape(Function):
@@ -269,26 +311,103 @@ class _Reshape(Function):
 
     @staticmethod
     def backward(ctx, g):
-        return g.reshape(ctx.saved_data['x_shape'])
+        return g.reshape(ctx.saved_data["x_shape"])
 
 
 class _Slice(Function):
     @staticmethod
     def forward(ctx, x, idx):
-        # Save only shape and idx, not full x (memory efficient)
         ctx.save_for_backward(x_shape=x.shape, x_dtype=x.dtype, idx=idx)
         return x[idx]
 
     @staticmethod
     def backward(ctx, g):
-        x_shape = ctx.saved_data['x_shape']
-        x_dtype = ctx.saved_data['x_dtype']
-        idx = ctx.saved_data['idx']
+        x_shape = ctx.saved_data["x_shape"]
+        x_dtype = ctx.saved_data["x_dtype"]
+        idx = ctx.saved_data["idx"]
         full = np.zeros(x_shape, dtype=x_dtype)
-        # Use np.add.at for correct accumulation with duplicate indices (fancy indexing)
-        np.add.at(full, idx, g)
+        np.add.at(full, idx, g)  # handles duplicate indices
         return full
 
+
+class _Concatenate(Function):
+    @staticmethod
+    def forward(ctx, axis, *tensors):
+        ndim = tensors[0].ndim if tensors else 0
+        axis_norm = axis if axis >= 0 else axis + ndim
+        ctx.save_for_backward(axis=axis, splits=tuple(t.shape[axis] for t in tensors))
+        return np.concatenate(tensors, axis=axis)
+
+    @staticmethod
+    def backward(ctx, g):
+        axis = ctx.saved_data["axis"]
+        splits = ctx.saved_data["splits"]
+        return tuple(np.split(g, np.cumsum(splits[:-1]), axis=axis))
+
+
+class _Tile(Function):
+    @staticmethod
+    def forward(ctx, x, reps):
+        ctx.save_for_backward(x_shape=x.shape, reps=tuple(reps))
+        return np.tile(x, reps)
+
+    @staticmethod
+    def backward(ctx, g):
+        x_shape = tuple(ctx.saved_data["x_shape"])
+        reps = tuple(ctx.saved_data["reps"])
+
+        # Align reps length with x ndim
+        nd_out = max(len(x_shape), len(reps))
+        eff_x = (1,) * (nd_out - len(x_shape)) + x_shape
+        reps_padded = (1,) * (nd_out - len(reps)) + reps
+
+        # Sum over tiled copies, last axis first to keep indices stable
+        for axis in reversed(range(nd_out)):
+            r = reps_padded[axis]
+            if r == 1:
+                continue
+            try:
+                g = sum(np.split(g, r, axis=axis))
+            except ValueError:
+                # Fallback for non-even splits via reshape
+                shape = list(g.shape)
+                shape[axis] = eff_x[axis]
+                shape.insert(axis + 1, r)
+                g = g.reshape(shape).sum(axis=axis + 1)
+
+        # Remove leading padded dims
+        if g.shape != x_shape:
+            try:
+                g = g.reshape(x_shape)
+            except ValueError:
+                leading = len(g.shape) - len(x_shape)
+                if leading > 0:
+                    g = g.sum(axis=tuple(range(leading)))
+                g = g.reshape(x_shape)
+        return g
+
+
+class _Repeat(Function):
+    @staticmethod
+    def forward(ctx, x, repeats, axis):
+        axis_norm = axis if axis >= 0 else axis + x.ndim
+        ctx.save_for_backward(x_shape=x.shape, repeats=repeats, axis=axis_norm)
+        return np.repeat(x, repeats, axis=axis_norm)
+
+    @staticmethod
+    def backward(ctx, g):
+        x_shape = ctx.saved_data["x_shape"]
+        repeats = ctx.saved_data["repeats"]
+        axis = ctx.saved_data["axis"]
+        shape = list(g.shape)
+        shape[axis] = x_shape[axis]
+        shape.insert(axis + 1, repeats)
+        return g.reshape(shape).sum(axis=axis + 1)
+
+
+# ---------------------------------------------------------------------------
+# Elementwise unary
+# ---------------------------------------------------------------------------
 
 class _Relu(Function):
     @staticmethod
@@ -299,20 +418,19 @@ class _Relu(Function):
 
     @staticmethod
     def backward(ctx, g):
-        return g * ctx.saved_data['mask'].astype(float)
+        return g * ctx.saved_data["mask"].astype(float)
 
 
 class _Sigmoid(Function):
     @staticmethod
     def forward(ctx, x):
         s = 1.0 / (1.0 + np.exp(-np.clip(x, -500, 500)))
-        # Save s for backward; keep copy to avoid aliasing with output
         ctx.save_for_backward(s=s)
         return s
 
     @staticmethod
     def backward(ctx, g):
-        s = ctx.saved_data['s']
+        s = ctx.saved_data["s"]
         return g * s * (1.0 - s)
 
 
@@ -325,7 +443,7 @@ class _Tanh(Function):
 
     @staticmethod
     def backward(ctx, g):
-        t = ctx.saved_data['t']
+        t = ctx.saved_data["t"]
         return g * (1.0 - t ** 2)
 
 
@@ -338,18 +456,14 @@ class _Silu(Function):
 
     @staticmethod
     def backward(ctx, g):
-        x, s = ctx.saved_data['x'], ctx.saved_data['s']
+        x, s = ctx.saved_data["x"], ctx.saved_data["s"]
         return g * (s + x * s * (1.0 - s))
 
 
 class _Softmax(Function):
     @staticmethod
     def forward(ctx, x, axis):
-        # Normalize axis
-        ndim = x.ndim
-        if axis is None:
-            axis = -1
-        axis_norm = axis if axis >= 0 else axis + ndim
+        axis = -1 if axis is None else axis
         x_max = np.max(x, axis=axis, keepdims=True)
         exps = np.exp(x - x_max)
         s = exps / np.sum(exps, axis=axis, keepdims=True)
@@ -358,7 +472,7 @@ class _Softmax(Function):
 
     @staticmethod
     def backward(ctx, g):
-        s, axis = ctx.saved_data['s'], ctx.saved_data['axis']
+        s, axis = ctx.saved_data["s"], ctx.saved_data["axis"]
         dot = np.sum(s * g, axis=axis, keepdims=True)
         return s * (g - dot)
 
@@ -366,15 +480,13 @@ class _Softmax(Function):
 class _Sqrt(Function):
     @staticmethod
     def forward(ctx, x):
-        # Clamp negative to 0 for stability? Assume x >=0
         out = np.sqrt(np.maximum(x, 0))
         ctx.save_for_backward(out=out)
         return out
 
     @staticmethod
     def backward(ctx, g):
-        out = ctx.saved_data['out']
-        # grad = g / (2 * sqrt(x)) = g / (2*out); handle out==0 with eps
+        out = ctx.saved_data["out"]
         return g / (2.0 * np.maximum(out, 1e-15))
 
 
@@ -387,7 +499,7 @@ class _Exp(Function):
 
     @staticmethod
     def backward(ctx, g):
-        return g * ctx.saved_data['out']
+        return g * ctx.saved_data["out"]
 
 
 class _Log(Function):
@@ -398,106 +510,7 @@ class _Log(Function):
 
     @staticmethod
     def backward(ctx, g):
-        return g / np.maximum(ctx.saved_data['x'], 1e-15)
-
-
-class _Max(Function):
-    @staticmethod
-    def forward(ctx, x, axis, keepdims):
-        ctx.save_for_backward(x=x, axis=axis, keepdims=keepdims)
-        return np.max(x, axis=axis, keepdims=keepdims)
-
-    @staticmethod
-    def backward(ctx, g):
-        x, axis, keepdims = ctx.saved_data['x'], ctx.saved_data['axis'], ctx.saved_data['keepdims']
-        # Create mask for max positions; handle ties by dividing equally
-        x_max = np.max(x, axis=axis, keepdims=True)
-        mask = (x == x_max).astype(float)
-        if axis is None:
-            s = mask.sum()
-            s = np.clip(s, 1e-15, None)
-            mask = mask / s
-            gx = g * mask  # g is scalar
-        else:
-            axes = _normalize_axis(axis, x.ndim)
-            # Sum over reduced axes with keepdims True to get count per slice
-            s = mask.sum(axis=axis, keepdims=True)
-            s = np.clip(s, 1e-15, None)
-            mask = mask / s
-            # Expand g to x shape
-            gx_expanded = _expand_grad_to_shape(g, x.shape, axis, keepdims)
-            gx = gx_expanded * mask
-        return gx
-
-
-class _Concatenate(Function):
-    @staticmethod
-    def forward(ctx, axis, *tensors):
-        # Normalize axis
-        ndim = tensors[0].ndim if tensors else 0
-        axis_norm = axis if axis >= 0 else axis + ndim
-        if not 0 <= axis_norm < ndim:
-            # Allow axis == ndim for 1D? but numpy allows. Validate via first tensor
-            pass
-        ctx.save_for_backward(axis=axis, axis_norm=axis_norm, splits=tuple(t.shape[axis] for t in tensors), ndim=ndim)
-        return np.concatenate(tensors, axis=axis)
-
-    @staticmethod
-    def backward(ctx, g):
-        axis = ctx.saved_data['axis']
-        splits = ctx.saved_data['splits']
-        # Use normalized axis for split but numpy accepts negative too; keep original
-        return tuple(np.split(g, np.cumsum(splits[:-1]), axis=axis))
-
-
-class _Tile(Function):
-    @staticmethod
-    def forward(ctx, x, reps):
-        ctx.save_for_backward(x_shape=x.shape, reps=tuple(reps))
-        return np.tile(x, reps)
-
-    @staticmethod
-    def backward(ctx, g):
-        x_shape, reps = ctx.saved_data['x_shape'], ctx.saved_data['reps']
-        # Robust handling for reps length mismatch with ndim
-        x_shape = tuple(x_shape)
-        reps = tuple(reps)
-        nd_out = max(len(x_shape), len(reps))
-        eff_x = (1,) * (nd_out - len(x_shape)) + x_shape
-        reps_padded = (1,) * (nd_out - len(reps)) + reps
-        # Iteratively sum over tiled repetitions
-        # Process from last axis to first to keep axis indices stable
-        for axis in reversed(range(nd_out)):
-            r = reps_padded[axis]
-            if r == 1:
-                continue
-            # g.shape[axis] should be eff_x[axis] * r
-            # Split and sum
-            # Use split; handle case where g.shape[axis] not divisible due to rounding? Should be exact.
-            try:
-                parts = np.split(g, r, axis=axis)
-            except ValueError:
-                # Fallback: reshape then sum
-                # e.g., g.shape[axis] = eff_x[axis]*r, split via reshape
-                shape = list(g.shape)
-                shape[axis] = eff_x[axis]
-                shape.insert(axis + 1, r)
-                g_reshaped = g.reshape(shape)
-                g = g_reshaped.sum(axis=axis + 1)
-                continue
-            g = sum(parts)
-        # Now g shape == eff_x
-        if g.shape != x_shape:
-            # Remove leading padded dims by squeezing/reshaping
-            try:
-                g = g.reshape(x_shape)
-            except ValueError:
-                # Sum over leading dims that were added
-                leading = len(eff_x) - len(x_shape)
-                if leading > 0:
-                    g = g.sum(axis=tuple(range(leading)))
-                    g = g.reshape(x_shape)
-        return g
+        return g / np.maximum(ctx.saved_data["x"], 1e-15)
 
 
 class _Clip(Function):
@@ -508,9 +521,7 @@ class _Clip(Function):
 
     @staticmethod
     def backward(ctx, g):
-        x, a, b = ctx.saved_data['x'], ctx.saved_data['a'], ctx.saved_data['b']
-        # Gradient is zero where clipped (outside [a,b]), 1 inside inclusive
-        # Handle scalar a,b vs array
+        x, a, b = ctx.saved_data["x"], ctx.saved_data["a"], ctx.saved_data["b"]
         return g * ((x >= a) & (x <= b)).astype(float)
 
 
@@ -522,36 +533,7 @@ class _Abs(Function):
 
     @staticmethod
     def backward(ctx, g):
-        x = ctx.saved_data['x']
-        # Subgradient at 0 is 0
-        sign = np.sign(x)
-        # np.sign(0) == 0 already, good
-        return g * sign
-
-
-class _Repeat(Function):
-    @staticmethod
-    def forward(ctx, x, repeats, axis):
-        # Normalize axis
-        ndim = x.ndim
-        axis_norm = axis if axis >= 0 else axis + ndim
-        ctx.save_for_backward(x_shape=x.shape, repeats=repeats, axis=axis_norm)
-        return np.repeat(x, repeats, axis=axis_norm)
-
-    @staticmethod
-    def backward(ctx, g):
-        x_shape, repeats, axis = ctx.saved_data['x_shape'], ctx.saved_data['repeats'], ctx.saved_data['axis']
-        # g shape along axis is x_shape[axis] * repeats
-        # Reshape to (..., x_shape[axis], repeats, ...) and sum over repeats
-        # Implementation: reshape to insert repeats dim
-        # For robustness handle negative axis already normalized
-        shape = list(g.shape)
-        # Insert repeats dimension after axis
-        # But g.shape[axis] = x_shape[axis] * repeats
-        # So we reshape: shape[axis] = x_shape[axis], insert repeats
-        shape[axis] = x_shape[axis]
-        shape.insert(axis + 1, repeats)
-        return g.reshape(shape).sum(axis=axis + 1)
+        return g * np.sign(ctx.saved_data["x"])
 
 
 class _Maximum(Function):
@@ -562,17 +544,17 @@ class _Maximum(Function):
 
     @staticmethod
     def backward(ctx, g):
-        a, b = ctx.saved_data['a'], ctx.saved_data['b']
-        # Tie case: gradient goes to both? Use standard where a>=b gets grad
-        # For robustness distribute equally on ties to avoid bias
+        a, b = ctx.saved_data["a"], ctx.saved_data["b"]
+        # Distribute ties equally for unbiased gradient
         mask_a = (a > b).astype(float)
         mask_b = (b > a).astype(float)
-        tie = (a == b).astype(float)
-        # Split ties equally
-        mask_a += tie * 0.5
-        mask_b += tie * 0.5
-        return g * mask_a, g * mask_b
+        tie = (a == b).astype(float) * 0.5
+        return g * (mask_a + tie), g * (mask_b + tie)
 
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def add(a, b):
     return _Add.apply(_ensure_tensor(a), _ensure_tensor(b))
@@ -617,7 +599,6 @@ def transpose(x, axes=None):
 
 
 def reshape(x, shape):
-    # Validate shape
     if not isinstance(shape, (tuple, list)):
         raise TypeError(f"reshape shape must be tuple/list, got {type(shape)}")
     return _Reshape.apply(_ensure_tensor(x), tuple(shape))
@@ -701,5 +682,5 @@ def maximum(a, b):
 def var(x, axis=None, keepdims=False):
     x_t = _ensure_tensor(x)
     mean = _mean(x_t, axis=axis, keepdims=True)
-    diff = x_t - mean  # uses sub with broadcasting
+    diff = x_t - mean
     return _mean(diff ** 2, axis=axis, keepdims=keepdims)
