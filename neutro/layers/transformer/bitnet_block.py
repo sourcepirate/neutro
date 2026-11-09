@@ -45,46 +45,37 @@ class BitNetBlock(Layer):
     def compute_output_shape(self, input_shape):
         return input_shape
 
-    def forward(self, inputs, training=False, mask=None, kv_cache=None, layer_id=None):
-        B, S, D = inputs.shape
-        H = self.num_heads
-        Dh = self.head_dim
+    def _split_heads(self, x):
+        batch, seq, _ = x.shape
+        return x.reshape(batch, seq, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
 
-        h1_norm = self.attn_norm(inputs, training=training)
+    def _merge_heads(self, x, batch, seq):
+        return x.transpose(0, 2, 1, 3).reshape(batch, seq, self.embed_dim)
 
-        Q = self.wq(h1_norm, training=training)
-        K = self.wk(h1_norm, training=training)
-        V = self.wv(h1_norm, training=training)
+    @staticmethod
+    def _swiglu(gate, up):
+        return gate * autograd_ops.sigmoid(gate) * up
 
-        Q = Q.reshape(B, S, H, Dh).transpose(0, 2, 1, 3)
-        K = K.reshape(B, S, H, Dh).transpose(0, 2, 1, 3)
-        V = V.reshape(B, S, H, Dh).transpose(0, 2, 1, 3)
+    def _attention(self, inputs, training, mask):
+        batch, seq, _ = inputs.shape
+        normed = self.attn_norm(inputs, training=training)
+        query = self._split_heads(self.wq(normed, training=training))
+        key = self._split_heads(self.wk(normed, training=training))
+        value = self._split_heads(self.wv(normed, training=training))
 
-        scores = self.scale * (Q @ K.transpose(0, 1, 3, 2))
-
+        scores = self.scale * (query @ key.transpose(0, 1, 3, 2))
         if mask is not None:
             scores = scores + mask * -1e9
 
-        attn_weights = autograd_ops.softmax(scores, axis=-1)
+        weights = autograd_ops.softmax(scores, axis=-1)
+        output = self._merge_heads(weights @ value, batch, seq)
+        return inputs + self.wo(output, training=training)
 
-        attn_out = attn_weights @ V
-        attn_out = attn_out.transpose(0, 2, 1, 3).reshape(B, S, D)
+    def _feed_forward(self, inputs, training):
+        normed = self.ffn_norm(inputs, training=training)
+        gate = self.ffn_gate(normed, training=training)
+        up = self.ffn_up(normed, training=training)
+        return inputs + self.ffn_down(self._swiglu(gate, up), training=training)
 
-        attn_proj = self.wo(attn_out, training=training)
-
-        h = inputs + attn_proj
-
-        h2_norm = self.ffn_norm(h, training=training)
-
-        gate = self.ffn_gate(h2_norm, training=training)
-        up = self.ffn_up(h2_norm, training=training)
-
-        sigmoid_gate = autograd_ops.sigmoid(gate)
-        activated_gate = gate * sigmoid_gate
-
-        multiplied = activated_gate * up
-
-        ffn_out = self.ffn_down(multiplied, training=training)
-
-        out = h + ffn_out
-        return out
+    def forward(self, inputs, training=False, mask=None, kv_cache=None, layer_id=None):
+        return self._feed_forward(self._attention(inputs, training, mask), training)

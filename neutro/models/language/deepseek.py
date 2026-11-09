@@ -48,52 +48,37 @@ class DeepSeekMoEBlock(Layer):
 
         return h + moe_out + shared_out
 
-def DeepSeekV1Tiny(vocab_size, seq_len, dim=512, n_layers=2, n_heads=8):
-    """
-    DeepSeek V1: The strong baseline.
-    Standard MHA and MoE.
-    """
-    model = Sequential([
-        Embedding(vocab_size, dim, input_shape=(seq_len,)),
-    ])
+def _deepseek_tiny(vocab_size, seq_len, dim, n_layers, n_heads, n_experts, top_k, use_mla):
+    model = Sequential([Embedding(vocab_size, dim, input_shape=(seq_len,))])
     for _ in range(n_layers):
-        model.add(DeepSeekMoEBlock(dim, n_heads, n_experts=8, top_k=2, use_mla=False))
+        model.add(DeepSeekMoEBlock(
+            dim, n_heads, n_experts=n_experts, top_k=top_k, use_mla=use_mla
+        ))
     model.add(RMSNorm())
     model.add(Dense(vocab_size))
     return model
+
+
+def DeepSeekV1Tiny(vocab_size, seq_len, dim=512, n_layers=2, n_heads=8):
+    """DeepSeek V1: standard MHA and MoE."""
+    return _deepseek_tiny(vocab_size, seq_len, dim, n_layers, n_heads, 8, 2, False)
+
 
 def DeepSeekV2Tiny(vocab_size, seq_len, dim=512, n_layers=2, n_heads=8):
-    """
-    DeepSeek V2: The MLA revolution.
-    Introduces Multi-head Latent Attention.
-    """
-    model = Sequential([
-        Embedding(vocab_size, dim, input_shape=(seq_len,)),
-    ])
-    for _ in range(n_layers):
-        model.add(DeepSeekMoEBlock(dim, n_heads, n_experts=8, top_k=2, use_mla=True))
-    model.add(RMSNorm())
-    model.add(Dense(vocab_size))
-    return model
+    """DeepSeek V2: MLA plus MoE."""
+    return _deepseek_tiny(vocab_size, seq_len, dim, n_layers, n_heads, 8, 2, True)
+
 
 def DeepSeekV3Tiny(vocab_size, seq_len, dim=512, n_layers=2, n_heads=8):
-    """
-    DeepSeek V3: Refined MLA and MoE.
-    More experts, more fine-grained routing.
-    """
-    model = Sequential([
-        Embedding(vocab_size, dim, input_shape=(seq_len,)),
-    ])
-    for _ in range(n_layers):
-        model.add(DeepSeekMoEBlock(dim, n_heads, n_experts=16, top_k=4, use_mla=True))
-    model.add(RMSNorm())
-    model.add(Dense(vocab_size))
-    return model
+    """DeepSeek V3: more experts and a larger top-k."""
+    return _deepseek_tiny(vocab_size, seq_len, dim, n_layers, n_heads, 16, 4, True)
+
 
 def DeepSeekV4Tiny(vocab_size, seq_len, dim=512, n_layers=2, n_heads=8):
-    """Alias for a deeper ``DeepSeekV3Tiny``; not a released architecture."""
+    """Alias for a deeper DeepSeekV3Tiny."""
     return DeepSeekV3Tiny(vocab_size, seq_len, dim, n_layers + 1, n_heads)
 
+
 def DeepSeekTiny(vocab_size, seq_len, dim=512, n_layers=2, n_heads=8):
-    # Alias for V2
+    """Alias for DeepSeekV2Tiny."""
     return DeepSeekV2Tiny(vocab_size, seq_len, dim, n_layers, n_heads)

@@ -5,11 +5,6 @@ from .dense import Dense
 from neutro.autograd import Tensor, ops as autograd_ops
 
 
-def _make_relu_expert(input_dim, expert_units):
-    # Built lazily in build(); placeholder factory.
-    return [('relu', expert_units)]
-
-
 class MoELayer(Layer):
     """Mixture of Experts with top-k routing.
 
@@ -45,80 +40,67 @@ class MoELayer(Layer):
     def _build_expert(self, input_shape, hidden):
         if self.expert_type == 'swiglu':
             from .swiglu_mlp import SwiGLUMLP
-            dim = input_shape[-1]
-            return SwiGLUMLP(dim, hidden)
-        e1 = Dense(hidden if hidden else self.expert_units, activation='relu')
-        return e1
+            expert = SwiGLUMLP(self.input_dim, hidden)
+            expert.build(input_shape)
+            return expert
+
+        first = Dense(hidden, activation='relu')
+        first.build(input_shape)
+        second = Dense(self.input_dim)
+        second.build((*input_shape[:-1], hidden))
+        return [first, second]
 
     def build(self, input_shape):
-        from .swiglu_mlp import SwiGLUMLP
         self.input_dim = input_shape[-1]
         rng = np.random.default_rng(0)
         self.params['router_weight'] = Tensor(
             rng.normal(0, 0.02, (self.input_dim, self.num_experts)))
         hidden = self.expert_hidden_dim or self.expert_units or (self.input_dim * 2)
-        self.experts = []
-        for _ in range(self.num_experts):
-            if self.expert_type == 'swiglu':
-                ex = SwiGLUMLP(self.input_dim, hidden)
-                ex.build(input_shape)
-                self.experts.append(ex)
-            else:
-                e1 = Dense(hidden, activation='relu')
-                e1.build(input_shape)
-                mid = tuple(list(input_shape[:-1]) + [hidden])
-                e2 = Dense(self.input_dim)
-                e2.build(mid)
-                self.experts.append([e1, e2])
+        self.experts = [self._build_expert(input_shape, hidden) for _ in range(self.num_experts)]
         super().build(input_shape)
 
     def compute_output_shape(self, input_shape):
         return input_shape
 
     def _expert_forward(self, expert, x, training):
-        if isinstance(expert, list):
-            out = x
-            for layer in expert:
-                out = layer(out, training=training)
-            return out
-        return expert(x, training=training)
+        if not isinstance(expert, list):
+            return expert(x, training=training)
+        for layer in expert:
+            x = layer(x, training=training)
+        return x
+
+    def _top_k_mask(self, probs):
+        top_k_idx = np.argsort(probs, axis=-1)[:, -self.top_k:]
+        mask = np.zeros_like(probs)
+        np.put_along_axis(mask, top_k_idx, 1.0, axis=-1)
+        return mask
+
+    def _update_aux_stats(self, mask, probs):
+        tokens = probs.shape[0]
+        self._last_frac = mask.sum(axis=0) / max(tokens, 1)
+        self._last_mean_prob = probs.mean(axis=0)
+        self.aux_loss_value = float(
+            self.num_experts * np.sum(self._last_frac * self._last_mean_prob))
 
     def forward(self, x, training=False):
-        # x: Tensor (..., D); flatten tokens.
         x_shape = x.shape
         x_flat = x.reshape((-1, self.input_dim))
-        logits = x_flat @ self.params['router_weight']  # (T, E) Tensor
-        probs = autograd_ops.softmax(logits, axis=-1)  # Tensor
+        probs = autograd_ops.softmax(x_flat @ self.params['router_weight'], axis=-1)
         probs_np = np.asarray(probs.data)
 
-        # Top-k mask (non-differentiable indices, differentiable weights).
-        top_k_idx = np.argsort(probs_np, axis=-1)[:, -self.top_k:]
-        mask = np.zeros_like(probs_np)
-        np.put_along_axis(mask, top_k_idx, 1.0, axis=-1)
-        masked = probs * Tensor(mask)  # re-normalize over top-k
-        renorm = masked.sum(axis=-1, keepdims=True)
-        # Avoid div-by-zero: renorm is >= top-k min prob > 0 in practice;
-        # add epsilon via numpy-safe Tensor op.
-        weights = masked / (renorm + 1e-9)
-
-        # Load-balancing aux stats (floats for logging/loss).
-        tokens = probs_np.shape[0]
-        frac = mask.sum(axis=0) / max(tokens, 1)
-        mean_prob = probs_np.mean(axis=0)
-        self.aux_loss_value = float(
-            self.num_experts * np.sum(frac * mean_prob))
-        self._last_frac = frac
-        self._last_mean_prob = mean_prob
+        mask = self._top_k_mask(probs_np)
+        masked = probs * Tensor(mask)
+        weights = masked / (masked.sum(axis=-1, keepdims=True) + 1e-9)
+        self._update_aux_stats(mask, probs_np)
 
         out = None
-        for e in range(self.num_experts):
-            if np.all(mask[:, e] == 0):
+        for index, expert in enumerate(self.experts):
+            if not np.any(mask[:, index]):
                 continue
-            ex_out = self._expert_forward(self.experts[e], x_flat, training)
-            # Keep Tensor path for router grad: slice differentiable weights.
-            col = weights[:, e].reshape((-1, 1))
-            scaled = ex_out * col
+            weight = weights[:, index].reshape((-1, 1))
+            scaled = self._expert_forward(expert, x_flat, training) * weight
             out = scaled if out is None else out + scaled
+
         if out is None:
             out = x_flat * Tensor(np.zeros((1, 1)))
         return out.reshape(x_shape)

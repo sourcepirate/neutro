@@ -2,6 +2,7 @@ from ..base_model import Model
 from ...layers.convolutional.conv2d import Conv2D
 from ...layers.core.merging import Concatenate
 from ...layers.diffusion.time_mlp import TimeMLPEmbedding
+from ...layers.base import Layer
 from ...layers.core.dense import Dense
 from ...layers.pooling.maxpooling2d import MaxPooling2D
 from ...layers.pooling.upsampling2d import UpSampling2D
@@ -88,37 +89,5 @@ class UNet(Model):
         return self.final_conv(d2, training)
 
     def backward(self, grad_output):
-        # This needs manual backprop since it's not sequential
-        g_final = self.final_conv.backward(grad_output)
-        
-        g_d2 = self.dec2.backward(g_final)
-        g_u2, g_h1_dec = self.concat2.backward(g_d2)
-        g_d1_up = self.up2.backward(g_u2)
-        
-        g_d1 = self.dec1.backward(g_d1_up)
-        g_u1, g_h2_dec = self.concat1.backward(g_d1)
-        g_b_up = self.up1.backward(g_u1)
-
-        # Split time-conditioning add: b_total = bottleneck(p2) + broadcast(t_bias).
-        # g_b_up is grad w.r.t. b_total (B,H,W,Cbottleneck).
-        import numpy as _np
-        g_b_total = _np.asarray(g_b_up)
-        g_t_bc = g_b_total.sum(axis=(1, 2))  # (B, Cbottleneck)
-        g_t_emb = self.time_proj.backward(g_t_bc)
-        # time_mlp input is integer timesteps; grad not needed downstream.
-        try:
-            self.time_mlp.backward(_np.asarray(g_t_emb))
-        except Exception:
-            pass
-
-        g_b = self.bottleneck.backward(g_b_total)
-        g_p2 = self.pool2.backward(g_b)
-        # h2 was used in pool2 AND concat1
-        g_h2_total = g_p2 + g_h2_dec
-        g_p1 = self.enc2.backward(g_h2_total)
-        
-        g_h1_from_pool = self.pool1.backward(g_p1)
-        # h1 was used in pool1 AND concat2
-        g_h1_total = g_h1_from_pool + g_h1_dec
-        
-        return self.enc1.backward(g_h1_total)
+        grads = Layer.backward(self, grad_output)
+        return grads[0] if isinstance(grads, list) else grads

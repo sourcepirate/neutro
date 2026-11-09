@@ -1,40 +1,23 @@
 from ..base_model import Sequential
 from ...layers import Conv2D, Dense, Dropout, Flatten, MaxPooling2D, Softmax
 
+
 def _vgg_block(filters, num_convs, data_format):
-    layers = []
-    for _ in range(num_convs):
-        layers.append(Conv2D(filters, kernel_size=3, padding='same', activation='relu', data_format=data_format))
+    layers = [
+        Conv2D(filters, kernel_size=3, padding='same', activation='relu', data_format=data_format)
+        for _ in range(num_convs)
+    ]
     layers.append(MaxPooling2D(pool_size=2, strides=2, data_format=data_format))
     return layers
 
-def VGG16(input_shape=(224, 224, 3), num_classes=1000, data_format='channels_last'):
-    """
-    VGG16: The "All 3x3" champion.
-    The Oxford team decided that if one 3x3 kernel is good, 
-    sixteen of them must be better. They weren't wrong.
 
-    Args:
-        input_shape: Shape of one image. Use (H, W, C) for ``channels_last``
-            and (C, H, W) for ``channels_first``.
-        num_classes: Number of output classes.
-        data_format: Either ``channels_last`` or ``channels_first``.
-            This controls whether VGG expects image tensors as
-            ``(N, H, W, C)`` or ``(N, C, H, W)``.
-    """
+def _vgg(input_shape, num_classes, data_format, block_convs):
     layers = []
-    # Block 1
-    layers.extend(_vgg_block(64, 2, data_format))
-    # Block 2
-    layers.extend(_vgg_block(128, 2, data_format))
-    # Block 3
-    layers.extend(_vgg_block(256, 3, data_format))
-    # Block 4
-    layers.extend(_vgg_block(512, 3, data_format))
-    # Block 5
-    layers.extend(_vgg_block(512, 3, data_format))
-    
-    # Head
+    filters = 64
+    for num_convs in block_convs:
+        layers.extend(_vgg_block(filters, num_convs, data_format))
+        filters *= 2
+
     model = Sequential([
         *layers,
         Flatten(),
@@ -43,40 +26,17 @@ def VGG16(input_shape=(224, 224, 3), num_classes=1000, data_format='channels_las
         Dense(4096, activation='relu'),
         Dropout(0.5),
         Dense(num_classes),
-        Softmax()
+        Softmax(),
     ])
-    
-    # Set batch-aware input shape so summary() can infer layer shapes.
-    model.layers[0].input_shape = (None,) + input_shape
+    model.layers[0].input_shape = (None,) + tuple(input_shape)
     return model
+
+
+def VGG16(input_shape=(224, 224, 3), num_classes=1000, data_format='channels_last'):
+    """VGG16: five blocks of 3x3 convolutions followed by a classifier."""
+    return _vgg(input_shape, num_classes, data_format, [2, 2, 3, 3, 3])
+
 
 def VGG19(input_shape=(224, 224, 3), num_classes=1000, data_format='channels_last'):
-    """VGG19: Because 16 layers just didn't feel deep enough.
-
-    Args:
-        input_shape: Shape of one image. Use (H, W, C) for ``channels_last``
-            and (C, H, W) for ``channels_first``.
-        num_classes: Number of output classes.
-        data_format: Either ``channels_last`` or ``channels_first``.
-            This controls whether VGG expects image tensors as
-            ``(N, H, W, C)`` or ``(N, C, H, W)``.
-    """
-    layers = []
-    layers.extend(_vgg_block(64, 2, data_format))
-    layers.extend(_vgg_block(128, 2, data_format))
-    layers.extend(_vgg_block(256, 4, data_format))
-    layers.extend(_vgg_block(512, 4, data_format))
-    layers.extend(_vgg_block(512, 4, data_format))
-    
-    model = Sequential([
-        *layers,
-        Flatten(),
-        Dense(4096, activation='relu'),
-        Dropout(0.5),
-        Dense(4096, activation='relu'),
-        Dropout(0.5),
-        Dense(num_classes),
-        Softmax()
-    ])
-    model.layers[0].input_shape = (None,) + input_shape
-    return model
+    """VGG19: the deeper VGG16 variant with three extra convolutions."""
+    return _vgg(input_shape, num_classes, data_format, [2, 2, 4, 4, 4])

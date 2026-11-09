@@ -111,15 +111,13 @@ class Model(Layer):
     def _get_all_layers(self, layers=None, visited=None):
         roots = self.layers if layers is None else layers
         seen = set() if visited is None else visited
-        stack = list(reversed(roots))
         result = []
-        while stack:
-            layer = stack.pop()
-            if id(layer) in seen:
-                continue
-            seen.add(id(layer))
-            result.append(layer)
-            stack.extend(reversed(layer.sublayers))
+        for root in roots:
+            for layer in _iter_layer_tree(root):
+                if id(layer) in seen:
+                    continue
+                seen.add(id(layer))
+                result.append(layer)
         return result
 
     _STATE_EXCLUDE = {'params', 'grads', 'built', 'input_shape', 'output_shape',
@@ -244,6 +242,52 @@ class Model(Layer):
         for p in self.trainable_params:
             p.zero_grad()
 
+    def _seed_tensor_map(self, inputs):
+        if isinstance(self.inputs, list):
+            return {id(t): value for t, value in zip(self.inputs, inputs)}
+        return {id(self.inputs): inputs}
+
+    @staticmethod
+    def _node_inputs(node, tensor_map):
+        if isinstance(node.input_tensors, list):
+            return [tensor_map.get(id(t)) for t in node.input_tensors]
+        return tensor_map.get(id(node.input_tensors))
+
+    @staticmethod
+    def _store_node_outputs(node, output, tensor_map):
+        if isinstance(node.output_tensors, list):
+            for tensor, value in zip(node.output_tensors, output):
+                tensor_map[id(tensor)] = value
+        else:
+            tensor_map[id(node.output_tensors)] = output
+
+    def _forward_functional(self, inputs, training):
+        tensor_map = self._seed_tensor_map(inputs)
+
+        for node in self._nodes_ordered:
+            if isinstance(node.layer, InputLayer):
+                continue
+
+            node_inputs = self._node_inputs(node, tensor_map)
+            output = node.layer.forward(node_inputs, training=training)
+            node.layer._last_inputs = as_tensor(node_inputs)
+            node.layer._last_kwargs = {'training': training}
+            node.state = self._capture_layer_state(node.layer)
+            self._store_node_outputs(node, output, tensor_map)
+
+        if isinstance(self.outputs, list):
+            return [tensor_map[id(tensor)] for tensor in self.outputs]
+        return tensor_map[id(self.outputs)]
+
+    def _forward_layers(self, inputs, training, kv_cache):
+        for i, layer in enumerate(self.layers):
+            accepts_cache = 'kv_cache' in inspect.signature(layer.forward).parameters
+            if kv_cache is not None and accepts_cache:
+                inputs = layer(inputs, training=training, kv_cache=kv_cache, layer_id=i)
+            else:
+                inputs = layer(inputs, training=training)
+        return inputs
+
     def forward(self, inputs, training=False, kv_cache=None):
         """Run inputs through the model.
 
@@ -252,83 +296,88 @@ class Model(Layer):
         ``kv_cache`` to layers that accept it.
         """
         if self.inputs is not None:
-            # Functional API forward pass
-            tensor_map = {}
+            return self._forward_functional(inputs, training)
+        return self._forward_layers(inputs, training, kv_cache)
 
-            # Map input values
-            if isinstance(self.inputs, list):
-                for i, t in enumerate(self.inputs):
-                    tensor_map[id(t)] = inputs[i]
-            else:
-                tensor_map[id(self.inputs)] = inputs
-
-            for node in self._nodes_ordered:
-                if isinstance(node.layer, InputLayer):
-                    continue
-
-                # Prepare inputs for this node
-                if isinstance(node.input_tensors, list):
-                    node_inputs = [tensor_map.get(id(t)) for t in node.input_tensors]
-                else:
-                    node_inputs = tensor_map.get(id(node.input_tensors))
-
-                output = node.layer.forward(node_inputs, training=training)
-                node.layer._last_inputs = as_tensor(node_inputs)
-                node.layer._last_kwargs = {'training': training}
-
-                # Capture state AFTER forward so it captures the current call's data
-                node.state = self._capture_layer_state(node.layer)
-
-                # Store outputs
-                if isinstance(node.output_tensors, list):
-                    for i, t in enumerate(node.output_tensors):
-                        tensor_map[id(t)] = output[i]
-                else:
-                    tensor_map[id(node.output_tensors)] = output
-
-            # Return model outputs
-            if isinstance(self.outputs, list):
-                return [tensor_map[id(o)] for o in self.outputs]
-            else:
-                return tensor_map[id(self.outputs)]
-
-        # Sequential or Subclassed forward pass
-        for i, layer in enumerate(self.layers):
-            if kv_cache is not None and 'kv_cache' in inspect.signature(layer.forward).parameters:
-                # Layer accepts kv_cache (Attention or Blocks)
-                inputs = layer(inputs, training=training, kv_cache=kv_cache, layer_id=i)
-            else:
-                inputs = layer(inputs, training=training)
-        return inputs
+    @staticmethod
+    def _sample_next_token(logits, temperature):
+        scores = np.asarray(logits)[:, -1, :] / temperature
+        scores = scores - np.max(scores, axis=-1, keepdims=True)
+        probs = np.exp(scores)
+        probs /= np.sum(probs, axis=-1, keepdims=True)
+        samples = [np.random.choice(len(row), p=row) for row in probs]
+        return np.asarray(samples).reshape(-1, 1)
 
     def generate(self, start_tokens, max_new_tokens, temperature=1.0):
         """Autoregressive generation with KV Caching."""
         cache = KVCache()
-
-        # Start with the full prompt
-        curr_tokens = start_tokens
+        current = start_tokens
         generated = start_tokens
 
         for _ in range(max_new_tokens):
-            # Forward pass
-            logits = self.forward(curr_tokens, training=False, kv_cache=cache)
-
-            # Get the logits for the last token only: (batch, seq, vocab) -> (batch, vocab)
-            next_token_logits = logits[:, -1, :] / temperature
-
-            # Softmax probabilities
-            probs = np.exp(next_token_logits - np.max(next_token_logits, axis=-1, keepdims=True))
-            probs /= np.sum(probs, axis=-1, keepdims=True)
-
-            # Sample next token
-            next_token = np.array([np.random.choice(len(p), p=p) for p in probs])
-            next_token = next_token.reshape(-1, 1)
-
-            # With KV Cache, only the last token needs to be passed forward
-            curr_tokens = next_token
+            logits = self.forward(current, training=False, kv_cache=cache)
+            next_token = self._sample_next_token(logits, temperature)
+            current = next_token
             generated = np.concatenate([generated, next_token], axis=1)
 
         return generated
+
+    def _seed_grad_map(self, grad):
+        if isinstance(self.outputs, list):
+            return {id(tensor): value for tensor, value in zip(self.outputs, grad)}
+        return {id(self.outputs): grad}
+
+    @staticmethod
+    def _node_output_grads(node, grad_map):
+        if isinstance(node.output_tensors, list):
+            return [grad_map.get(id(t)) for t in node.output_tensors]
+        return grad_map.get(id(node.output_tensors))
+
+    @staticmethod
+    def _add_grad(grad_map, tensor, grad):
+        tensor_id = id(tensor)
+        if tensor_id in grad_map:
+            grad_map[tensor_id] = grad_map[tensor_id] + grad
+        else:
+            grad_map[tensor_id] = grad
+
+    def _propagate_input_grads(self, node, grad_inputs, grad_map):
+        if isinstance(node.input_tensors, list):
+            if not isinstance(grad_inputs, list):
+                grad_inputs = [grad_inputs]
+            for tensor, grad in zip(node.input_tensors, grad_inputs):
+                self._add_grad(grad_map, tensor, grad)
+        elif node.input_tensors is not None:
+            self._add_grad(grad_map, node.input_tensors, grad_inputs)
+
+    def _backward_functional(self, grad):
+        grad_map = self._seed_grad_map(grad)
+        layer_grads = {}
+
+        for node in reversed(self._nodes_ordered):
+            if isinstance(node.layer, InputLayer):
+                continue
+
+            output_grads = self._node_output_grads(node, grad_map)
+            if output_grads is None:
+                continue
+
+            if hasattr(node, 'state'):
+                self._restore_layer_state(node.layer, node.state)
+
+            self._clear_layer_grads(node.layer)
+            input_grads = node.layer.backward(output_grads)
+            self._accumulate_layer_grads(node.layer, layer_grads)
+            self._propagate_input_grads(node, input_grads, grad_map)
+
+        if isinstance(self.inputs, list):
+            return [grad_map.get(id(tensor)) for tensor in self.inputs]
+        return grad_map.get(id(self.inputs))
+
+    def _backward_layers(self, grad):
+        for layer in reversed(self.layers):
+            grad = layer.backward(grad)
+        return grad
 
     def backward(self, grad):
         """Propagate ``grad`` backward through the model.
@@ -338,86 +387,17 @@ class Model(Layer):
         layer's ``backward`` in reverse order.
         """
         if self.outputs is not None:
-            # Functional API backward pass
-            grad_map = {}
-
-            # Map output gradients
-            if isinstance(self.outputs, list):
-                for i, t in enumerate(self.outputs):
-                    grad_map[id(t)] = grad[i]
-            else:
-                grad_map[id(self.outputs)] = grad
-
-            # Initialize accumulators for shared layers
-            layer_grads_accumulator = {}
-
-            for node in reversed(self._nodes_ordered):
-                if isinstance(node.layer, InputLayer):
-                    continue
-
-                # Get gradients for this node's outputs
-                if isinstance(node.output_tensors, list):
-                    node_grad_outputs = [grad_map.get(id(t)) for t in node.output_tensors]
-                else:
-                    node_grad_outputs = grad_map.get(id(node.output_tensors))
-
-                if node_grad_outputs is None:
-                    continue
-
-                # Restore state for this node recursively
-                if hasattr(node, 'state'):
-                    self._restore_layer_state(node.layer, node.state)
-
-                # Call layer.backward
-                # Temporarily clear layer-tree grads to capture only this node call
-                self._clear_layer_grads(node.layer)
-                grad_inputs = node.layer.backward(node_grad_outputs)
-
-                # Accumulate parameter gradients across the full layer tree
-                self._accumulate_layer_grads(node.layer, layer_grads_accumulator)
-
-                # Propagate gradients to inputs
-                if isinstance(node.input_tensors, list):
-                    if not isinstance(grad_inputs, list):
-                        grad_inputs = [grad_inputs]
-                    for i, t in enumerate(node.input_tensors):
-                        t_id = id(t)
-                        if t_id in grad_map:
-                            grad_map[t_id] += grad_inputs[i]
-                        else:
-                            grad_map[t_id] = grad_inputs[i]
-                elif node.input_tensors is not None:
-                    t_id = id(node.input_tensors)
-                    if t_id in grad_map:
-                        grad_map[t_id] += grad_inputs
-                    else:
-                        grad_map[t_id] = grad_inputs
-
-            # Return gradients for model inputs
-            if isinstance(self.inputs, list):
-                return [grad_map.get(id(i)) for i in self.inputs]
-            else:
-                return grad_map.get(id(self.inputs))
-
-        # Sequential or Subclassed backward pass
-        for layer in reversed(self.layers):
-            grad = layer.backward(grad)
-        return grad
+            return self._backward_functional(grad)
+        return self._backward_layers(grad)
 
     def compute_output_shape(self, input_shape):
         if self.outputs is not None:
-            if isinstance(self.outputs, list):
-                return [o.shape for o in self.outputs]
-            return self.outputs.shape
+            return [t.shape for t in self.outputs] if isinstance(self.outputs, list) else self.outputs.shape
 
-        # For Sequential models
-        if not self.layers:
-            return input_shape
-
-        curr_shape = input_shape
+        shape = input_shape
         for layer in self.layers:
-            curr_shape = layer.compute_output_shape(curr_shape)
-        return curr_shape
+            shape = layer.compute_output_shape(shape)
+        return shape
 
     def build(self, input_shape):
         if self.inputs is not None:
@@ -495,26 +475,18 @@ class Sequential(Model):
             for layer in layers:
                 self.add(layer)
 
+    @staticmethod
+    def _with_batch_dim(shape):
+        return (None,) + tuple(shape) if len(shape) in (1, 3) else tuple(shape)
+
     def add(self, layer):
         """Append ``layer`` and build it from the previous layer's shape."""
         if not self.layers:
-            # If it's the first layer and has input_shape, build it
             if layer.input_shape:
-                shape = layer.input_shape
-                # If input_shape doesn't include batch, add it
-                # Convention: if rank is 1 (seq_len) or 2 (flat) or 3 (image), we might need batch
-                # But it's safer to just check if the user provided it.
-                # In LlamaTiny, input_shape=(seq_len,) is passed.
-                if len(shape) == 1:
-                    shape = (None,) + shape
-                elif len(shape) == 3:  # (h, w, c)
-                    shape = (None,) + shape
-                layer.build(shape)
+                layer.build(self._with_batch_dim(layer.input_shape))
         else:
-            # Build based on previous layer's output shape
-            prev_layer = self.layers[-1]
-            if prev_layer.built:
-                input_shape = prev_layer.compute_output_shape(prev_layer.input_shape)
-                layer.build(input_shape)
+            previous = self.layers[-1]
+            if previous.built:
+                layer.build(previous.compute_output_shape(previous.input_shape))
 
         self.layers.append(layer)

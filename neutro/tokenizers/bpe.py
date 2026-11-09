@@ -32,34 +32,39 @@ class BPETokenizer:
     """
 
     def __init__(self):
-        # byte -> id mapping
         self.encoder = {bytes([i]): i for i in range(256)}
         self.decoder = {i: bytes([i]) for i in range(256)}
-        self.special_tokens = {}  # str -> int
-        self.inverse_special_tokens = {}  # int -> str
+        self.special_tokens = {}
+        self.inverse_special_tokens = {}
+
+    def _pair_bytes(self, pair):
+        return self.decoder[pair[0]] + self.decoder[pair[1]]
 
     def _train_loop(self, ids_list, vocab_size, verbose):
         """Run the greedy BPE merge loop across a list of token-id sequences."""
         assert vocab_size >= 256
         num_merges = vocab_size - 256
 
-        for i in range(num_merges):
+        for index in range(num_merges):
             stats = Counter(itertools.chain.from_iterable(
-                itertools.pairwise(ids) for ids in ids_list))
+                itertools.pairwise(ids) for ids in ids_list
+            ))
             if not stats:
                 break
 
             pair = max(stats, key=stats.get)
-            idx = 256 + i
+            token_id = 256 + index
+            ids_list = [merge(ids, pair, token_id) for ids in ids_list]
 
-            ids_list = [merge(ids, pair, idx) for ids in ids_list]
-
-            new_token_bytes = self.decoder[pair[0]] + self.decoder[pair[1]]
-            self.encoder[new_token_bytes] = idx
-            self.decoder[idx] = new_token_bytes
+            token = self._pair_bytes(pair)
+            self.encoder[token] = token_id
+            self.decoder[token_id] = token
 
             if verbose:
-                print(f"merge {i + 1}/{num_merges}: {pair} -> {idx} had {stats[pair]} occurrences")
+                print(
+                    f"merge {index + 1}/{num_merges}: {pair} -> {token_id} "
+                    f"had {stats[pair]} occurrences"
+                )
 
     def train(self, text, vocab_size, verbose=False):
         self._train_loop([list(text.encode("utf-8"))], vocab_size, verbose)
@@ -68,22 +73,18 @@ class BPETokenizer:
         return self._encode_piece(text.encode("utf-8"))
 
     def _encode_piece(self, piece_bytes):
-        # Optimized BPE encoding using a list of token ids
-        # Initially, each byte is a token
         ids = list(piece_bytes)
 
         while len(ids) >= 2:
-            # Find the pair that would be merged first (lowest rank in encoder)
             stats = get_stats(ids)
-            pair = min(stats, key=lambda p: self.encoder.get(self.decoder[p[0]] + self.decoder[p[1]], float("inf")))
-
-            # If the best pair is not in our merges, we are done
-            pair_bytes = self.decoder[pair[0]] + self.decoder[pair[1]]
-            if pair_bytes not in self.encoder:
+            pair = min(
+                stats,
+                key=lambda item: self.encoder.get(self._pair_bytes(item), float("inf")),
+            )
+            token = self._pair_bytes(pair)
+            if token not in self.encoder:
                 break
-
-            idx = self.encoder[pair_bytes]
-            ids = merge(ids, pair, idx)
+            ids = merge(ids, pair, self.encoder[token])
 
         return ids
 

@@ -18,6 +18,7 @@ from ..base import Layer
 from ...initializers import get as get_initializer
 from ...activations import get as get_activation
 from neutro.autograd import Tensor
+from .adapters import replace_in_model, select_dense_layers
 from neutro.utils.quantization import (
     quantize_nf4,
     dequantize_nf4,
@@ -316,129 +317,45 @@ class QLoRADense(Layer):
 # apply_qlora — inject QLoRA into an existing model
 # ---------------------------------------------------------------------------
 
-def _replace_layer_q(parent, old_layer, new_layer):
-    """Replace old_layer with new_layer inside parent (same as LoRA helper)."""
-    from ..base import Layer as _Layer
-    for attr_name, attr_val in list(vars(parent).items()):
-        if attr_val is old_layer:
-            setattr(parent, attr_name, new_layer)
-            return True
-        if isinstance(attr_val, list):
-            for i, item in enumerate(attr_val):
-                if item is old_layer:
-                    attr_val[i] = new_layer
-                    return True
-                if isinstance(item, _Layer) and _replace_layer_q(item, old_layer, new_layer):
-                    return True
-        elif isinstance(attr_val, tuple):
-            lst = list(attr_val)
-            replaced = False
-            for i, item in enumerate(lst):
-                if item is old_layer:
-                    lst[i] = new_layer
-                    replaced = True
-                elif isinstance(item, _Layer) and _replace_layer_q(item, old_layer, new_layer):
-                    replaced = True
-            if replaced:
-                setattr(parent, attr_name, tuple(lst))
-                return True
-        elif isinstance(attr_val, dict):
-            for k, v in list(attr_val.items()):
-                if v is old_layer:
-                    attr_val[k] = new_layer
-                    return True
-                if isinstance(v, _Layer) and _replace_layer_q(v, old_layer, new_layer):
-                    return True
-        elif isinstance(attr_val, _Layer):
-            if _replace_layer_q(attr_val, old_layer, new_layer):
-                return True
-    return False
-
-
 def apply_qlora(model, rank=8, alpha=16, dropout=0.0, block_size=64,
                 double_quant=True, target_modules=None, verbose=True):
-    """Inject QLoRA into Dense layers of a (built) model.
-
-    Same interface as ``apply_lora`` but quantizes the frozen weight to NF4.
-
-    Args:
-        model: a built Sequential or Model.
-        rank, alpha, dropout: LoRA hyperparams.
-        block_size: NF4 block size.
-        double_quant: whether to double-quantize absmax scales.
-        target_modules: None (all Dense) or name substrings / explicit layers.
-        verbose: print summary.
-
-    Returns:
-        (model, list[QLoRADense])
-    """
-    from .dense import Dense
-    from ..base import Layer as _Layer
-
-    all_layers = model._get_all_layers()
-
-    if target_modules is None:
-        targets = [l for l in all_layers if isinstance(l, Dense)]
-    elif isinstance(target_modules, str):
-        target_modules = [target_modules]
-        targets = []
-        for layer in all_layers:
-            if not isinstance(layer, Dense):
-                continue
-            name = layer.name or ""
-            if any(sub in name or sub in layer.__class__.__name__ for sub in target_modules):
-                targets.append(layer)
-    elif isinstance(target_modules, list) and target_modules and isinstance(target_modules[0], _Layer):
-        targets = [l for l in target_modules if isinstance(l, Dense)]
-    elif isinstance(target_modules, list):
-        targets = []
-        for layer in all_layers:
-            if not isinstance(layer, Dense):
-                continue
-            name = layer.name or ""
-            if any(sub in name or sub in layer.__class__.__name__ for sub in target_modules):
-                targets.append(layer)
-    else:
-        raise ValueError(f"Unsupported target_modules type: {type(target_modules)}")
+    """Inject QLoRA into Dense layers of a (built) model."""
+    targets = select_dense_layers(model, target_modules)
 
     if not targets:
         if verbose:
-            print("[apply_qlora] No matching Dense layers found — nothing to adapt.")
+            print("[apply_qlora] No matching Dense layers found - nothing to adapt.")
         return model, []
 
     new_layers = []
     for dense in targets:
         qlora = QLoRADense.from_dense(
-            dense, rank=rank, alpha=alpha, dropout=dropout,
-            block_size=block_size, double_quant=double_quant,
+            dense,
+            rank=rank,
+            alpha=alpha,
+            dropout=dropout,
+            block_size=block_size,
+            double_quant=double_quant,
         )
-        replaced = False
-        if hasattr(model, "layers") and dense in model.layers:
-            idx = model.layers.index(dense)
-            model.layers[idx] = qlora
-            replaced = True
-        else:
-            if _replace_layer_q(model, dense, qlora):
-                replaced = True
-            else:
-                for child in list(getattr(model, "layers", [])):
-                    if isinstance(child, _Layer) and _replace_layer_q(child, dense, qlora):
-                        replaced = True
-                        break
-        if not replaced and verbose:
-            print(f"[apply_qlora] Warning: could not locate parent of '{dense.name}' — skipping.")
+        if not replace_in_model(model, dense, qlora):
+            if verbose:
+                print(f"[apply_qlora] Warning: could not locate parent of '{dense.name}' - skipping.")
             continue
+
         new_layers.append(qlora)
         if verbose:
-            print(f"[apply_qlora] Adapted '{dense.name or dense.__class__.__name__}' "
-                  f"({dense.input_dim} -> {dense.units}) with rank={rank}, alpha={alpha}, "
-                  f"block_size={block_size}, double_quant={double_quant}")
+            print(
+                f"[apply_qlora] Adapted '{dense.name or dense.__class__.__name__}' "
+                f"({dense.input_dim} -> {dense.units}) with rank={rank}, alpha={alpha}"
+            )
 
     if verbose:
-        trainable = sum(l.count_params() for l in new_layers)
-        frozen = sum(l.W_codes.size for l in new_layers)
-        print(f"[apply_qlora] Total: {len(new_layers)} layers adapted | "
-              f"trainable {trainable:,} params vs {frozen:,} frozen "
-              f"({100*trainable/max(frozen,1):.2f}% of base)")
+        trainable = sum(layer.count_params() for layer in new_layers)
+        frozen = sum(layer.W_frozen.size for layer in new_layers)
+        print(
+            f"[apply_qlora] Total: {len(new_layers)} layers adapted | "
+            f"trainable {trainable:,} params vs {frozen:,} frozen "
+            f"({100 * trainable / max(frozen, 1):.2f}% of base)"
+        )
 
     return model, new_layers
