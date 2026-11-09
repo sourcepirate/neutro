@@ -1,65 +1,146 @@
 # Optimizers
 
-All optimizers update model parameters using gradients. They inherit from `neutro/optimizers/base.py`:
+An optimizer turns `layer.grads` into parameter updates. All optimizers inherit
+from `neutro.optimizers.base.Optimizer` and implement `step(layers)`.
+
+Source: `neutro/optimizers/`.
+
+`model.compile` accepts either an instance or a Keras-style name:
 
 ```python
-class Optimizer:
-    def __init__(self, learning_rate):
-        self.learning_rate = learning_rate
+from neutro.optimizers import Adam, SGD, AdamW
 
-    def step(self, layers):  # Called after backward
-        for layer in layers:
-            for param_name, param_value in layer.params.items():
-                grad = layer.grads[param_name]
-                param_value -= self.learning_rate * grad  # Vanilla SGD
+model.compile(optimizer=Adam(learning_rate=0.001),...)
+model.compile(optimizer="adam",...) # same defaults
+model.compile(optimizer="sgd",...)
+model.compile(optimizer="adamw",...)
 ```
 
-## SGD with Momentum — `neutro/optimizers/sgd.py`
+---
 
-$$v_t = \mu v_{t-1} + \alpha g_t$$
-$$w_{t+1} = w_t - v_t$$
+## SGD — `neutro/optimizers/sgd.py`
 
-Nesterov variant: $w_{t+1} = w_t + \mu v_t - \alpha g_t$
+Vanilla update:
+
+```text
+w = w - learning_rate * grad
+```
+
+With momentum:
+
+```text
+v = momentum * v - learning_rate * grad
+w = w + v
+```
+
+With Nesterov momentum:
+
+```text
+v = momentum * v - learning_rate * grad
+w = w + momentum * v - learning_rate * grad
+```
+
+`SGD(learning_rate=0.01, momentum=0.9, nesterov=True)`.
+
+The optimizer keys its velocity per `(id(layer), param_name)`, so layers can be
+added or removed without corrupting other state.
+
+---
 
 ## Adam — `neutro/optimizers/adam.py`
 
-$$m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t$$
-$$v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t^2$$
-$$\hat{m}_t = \frac{m_t}{1 - \beta_1^t}, \quad \hat{v}_t = \frac{v_t}{1 - \beta_2^t}$$
-$$w_{t+1} = w_t - \alpha \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}$$
+```text
+m = beta_1 * m + (1 - beta_1) * grad
+v = beta_2 * v + (1 - beta_2) * grad^2
+m_hat = m / (1 - beta_1^t)
+v_hat = v / (1 - beta_2^t)
+w = w - learning_rate * m_hat / (sqrt(v_hat) + epsilon)
+```
 
-Maintains per-parameter `m` (momentum) and `v` (velocity) states, keyed by `(id(layer), param_name)`.
+Defaults: `learning_rate=0.001`, `beta_1=0.9`, `beta_2=0.999`,
+`epsilon=1e-7`. `t` increments once per `step` call (not per parameter).
+
+---
 
 ## AdamW — `neutro/optimizers/adamw.py`
 
-Same as Adam but with **decoupled weight decay**:
+AdamW applies decoupled weight decay before the Adam update:
 
-$$w_{t+1} = w_t - \alpha \left( \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon} + \lambda w_t \right)$$
+```text
+w = w - learning_rate * weight_decay * w
+# then the ordinary Adam update
+```
 
-The weight decay $\lambda w_t$ is applied separately from the adaptive gradient, improving generalization.
+This differs from adding `weight_decay * w` to the gradient (classic Adam +
+L2), where the decay is scaled by the adaptive denominator. See
+[Loshchilov & Hutter (2017)](https://arxiv.org/abs/1711.05101).
 
-## Learning Rate Schedules — `neutro/optimizers/schedules.py`
+Defaults: `weight_decay=0.01`.
 
-Provides:
+---
 
-- **ExponentialDecay**: $\alpha_t = \alpha_0 \cdot r^{t/s}$
-- **InverseTimeDecay**: $\alpha_t = \alpha_0 / (1 + k \cdot t/s)$
+## Learning-rate schedules — `neutro/optimizers/schedules.py`
 
-Used as `learning_rate` argument: `Adam(learning_rate=ExponentialDecay(0.001, 100, 0.96))`.
-
-## Usage Example
+These are standalone callables; they do not plug into an optimizer
+automatically:
 
 ```python
-from neutro.optimizers import Adam, SGD
 from neutro.optimizers.schedules import ExponentialDecay
 
-sgd = SGD(learning_rate=0.01, momentum=0.9, nesterov=True)
-adam = Adam(learning_rate=0.001)
-adamw = AdamW(learning_rate=3e-4, weight_decay=0.01)
-
-schedule = ExponentialDecay(initial_lr=0.001, decay_steps=1000, decay_rate=0.96)
-custom = Adam(learning_rate=schedule)
+schedule = ExponentialDecay(
+    initial_learning_rate=0.001,
+    decay_steps=1000,
+    decay_rate=0.96,
+)
+lr = schedule(step=100) # a float
 ```
+
+Available:
+
+- `ExponentialDecay`: `lr = lr0 * decay_rate ** (step / decay_steps)`
+- `InverseTimeDecay`: `lr = lr0 / (1 + decay_rate * step / decay_steps)`
+
+Both support `staircase=True` to floor the exponent.
+
+To apply a schedule during training, use the `LearningRateScheduler` callback
+(`neutro/callbacks/lr_scheduler.py`):
+
+```python
+from neutro.callbacks import LearningRateScheduler
+
+def schedule(epoch, current_lr):
+    return current_lr * 0.9
+
+model.fit(x, y, epochs=10, callbacks=[LearningRateScheduler(schedule)])
+```
+
+Or set `optimizer.lr` manually between epochs.
+
+---
+
+## Adding a new optimizer
+
+Implement `step(layers)` and update each parameter in `layer.params`:
+
+```python
+from neutro.autograd import Tensor
+from neutro.optimizers.base import Optimizer, _get_data
+
+class MyOptimizer(Optimizer):
+    def step(self, layers):
+        for layer in layers:
+            if not getattr(layer, "trainable", True):
+                continue
+            for name, param in layer.params.items():
+                grad = param.grad if isinstance(param, Tensor) else layer.grads.get(name)
+                if grad is None:
+                    continue
+                _get_data(param)[...] -= self.learning_rate * grad
+```
+
+`_get_data` unwraps a `Tensor` to its NumPy array so the update is in place.
+
+---
 
 ## References
 

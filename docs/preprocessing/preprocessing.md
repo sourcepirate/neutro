@@ -34,9 +34,8 @@ for x_batch, y_batch in datagen.flow(X, y, batch_size=32):
 Provides `text_to_word_sequence`, `one_hot`, `hashing_trick`, and other Keras-compatible text preprocessing functions:
 
 ```python
-def text_to_word_sequence(text, filters='!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n', lower=True, split=' '):
-    # Split text into words
-    ...
+def text_to_word_sequence(text, filters='!"#$%&*+,-./:;<=>?@[\\]^_`{|}~\t\n', lower=True, split=' '):
+    # Split text into words...
 ```
 
 ## Sequence Preprocessing — `neutro/preprocessing/sequence.py`
@@ -49,8 +48,7 @@ Pads sequences to the same length:
 def pad_sequences(sequences, maxlen=None, padding='pre', truncating='pre', value=0.0):
     # Pad or truncate to maxlen
     padded = np.full((len(sequences), maxlen), value)
-    for i, seq in enumerate(sequences):
-        ...
+    for i, seq in enumerate(sequences):...
 ```
 
 ## References

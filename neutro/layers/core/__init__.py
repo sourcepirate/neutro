@@ -1,8 +1,10 @@
 from .activation import Activation, ReLU, Sigmoid, Softmax, Tanh
 from .bitlinear import BitLinear
+from .input_layer import Input, InputLayer
 from .dense import Dense
 from .dropout import Dropout
 from .flatten import Flatten
+from .swiglu_mlp import SwiGLUMLP
 from .lora import LoRADense, apply_lora
 from .merging import Add, Average, Concatenate, Maximum, Minimum, Multiply
 from .moe import MoELayer
@@ -18,6 +20,9 @@ __all__ = [
     "Dense",
     "Dropout",
     "Flatten",
+    "Input",
+    "InputLayer",
+    "SwiGLUMLP",
     "LoRADense",
     "Maximum",
     "Minimum",

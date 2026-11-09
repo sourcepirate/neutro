@@ -2,6 +2,25 @@ import numpy as np
 
 
 class Layer:
+    """Base class for all layers.
+
+    A layer has four jobs:
+
+    1. Store hyperparameters in ``__init__``.
+    2. Create parameters in ``build(input_shape)``.
+    3. Compute outputs in ``forward(inputs, training=False)``.
+    4. Provide gradients in ``backward(grad_output)``.
+
+    ``backward`` is optional. The base implementation replays ``forward``
+    inside a :class:`neutro.autograd.GradientTape`, so most layers only need
+    ``forward``. Override ``backward`` only when you want explicit chain-rule
+    code.
+
+    Parameters live in ``self.params`` (a ``dict`` of ``Tensor`` objects).
+    Gradients land in ``self.grads`` (a ``dict`` of NumPy arrays) after
+    ``backward`` runs.
+    """
+
     def __init__(self, name=None, **kwargs):
         self.name = name
         self.trainable = True
@@ -13,6 +32,11 @@ class Layer:
         self._inbound_nodes = []
 
     def build(self, input_shape):
+        """Create parameters for ``input_shape`` and mark the layer built.
+
+        Subclasses override this to allocate weights, then call
+        ``super().build(input_shape)``.
+        """
         self.input_shape = input_shape
         self.built = True
 
@@ -81,6 +105,16 @@ class Layer:
         return inputs if isinstance(inputs, AT) else AT(np.asarray(inputs))
 
     def backward(self, grad_output):
+        """Return ``dL/dinputs`` and fill ``self.grads``.
+
+        The default implementation re-runs ``forward`` inside a
+        ``GradientTape`` with the captured inputs and every parameter in this
+        layer tree watched. It then differentiates the scalar probe
+        ``(output * grad_output).sum()``, which has the same parameter
+        gradients as the original loss.
+
+        Override this method when you want to write the chain rule by hand.
+        """
         from neutro.autograd import GradientTape, Tensor as AT
 
         t_inputs = self._captured_inputs()
@@ -172,6 +206,11 @@ class Layer:
         return output
 
     def __call__(self, inputs, *args, **kwargs):
+        """Run the layer on real data, or build a graph for symbolic inputs.
+
+        ``KerasTensor`` inputs take the Functional-API path; NumPy arrays and
+        ``Tensor`` objects take the eager path.
+        """
         if self._is_symbolic_input(inputs):
             return self._symbolic_call(inputs)
         return self._eager_call(inputs, args, kwargs)

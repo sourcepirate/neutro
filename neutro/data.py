@@ -23,13 +23,16 @@ class DataLoader:
         self.on_epoch_end()
 
     def __len__(self) -> int:
+        """Number of batches (including a smaller final batch)."""
         return int(np.ceil(len(self.x) / self.batch_size))
 
     def on_epoch_end(self) -> None:
+        """Reshuffle the index array when shuffling is enabled."""
         if self.shuffle:
             np.random.shuffle(self.indices)
 
     def __getitem__(self, index):
+        """Return one ``(batch_x, batch_y)`` pair."""
         indices = self.indices[index * self.batch_size:(index + 1) * self.batch_size]
         batch_x, batch_y = self.x[indices], self.y[indices]
 
@@ -39,6 +42,7 @@ class DataLoader:
         return batch_x, batch_y
 
     def __iter__(self):
+        """Yield every batch, then reshuffle for the next epoch."""
         for i in range(len(self)):
             yield self[i]
         self.on_epoch_end()

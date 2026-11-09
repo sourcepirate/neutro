@@ -1,34 +1,51 @@
 # Data
 
-## DataLoader — `neutro/data.py`
+## `DataLoader` — `neutro/data.py`
 
-A simple data loader for batching and shuffling:
+Batches and shuffles arrays. It assumes `x` and `y` support NumPy-style
+indexing (`x[indices]`).
 
 ```python
-class DataLoader:
-    def __init__(self, x, y, batch_size=32, shuffle=True, augmenter=None):
-        self.x = x
-        self.y = y
-        self.batch_size = batch_size
-        self.shuffle = shuffle
-        self.augmenter = augmenter
-        self.indices = np.arange(len(x))
-        self.on_epoch_end()
+from neutro.data import DataLoader
 
-    def __len__(self):
-        return int(np.ceil(len(self.x) / self.batch_size))
+loader = DataLoader(x, y, batch_size=32, shuffle=True)
 
-    def on_epoch_end(self):
-        if self.shuffle:
-            np.random.shuffle(self.indices)
+print(len(loader)) # number of batches
+bx, by = loader[0] # one batch
 
-    def __getitem__(self, index):
-        batch_idx = self.indices[index * self.batch_size:(index + 1) * self.batch_size]
-        batch_x, batch_y = self.x[batch_idx], self.y[batch_idx]
-        return batch_x, batch_y
-
-    def __iter__(self):
-        for i in range(len(self)):
-            yield self[i]
-        self.on_epoch_end()
+for bx, by in loader:... # reshuffles after the epoch
 ```
+
+### What each method does
+
+- `__len__` — `ceil(len(x) / batch_size)`.
+- `on_epoch_end` — reshuffles `self.indices` when `shuffle=True`.
+- `__getitem__(index)` — slices the index array, indexes `x` and `y`, and
+  applies the optional `augmenter` to each `x` item.
+- `__iter__` — yields every batch, then calls `on_epoch_end`.
+
+### Augmentation
+
+`augmenter` is any object with `apply_transform(x)`. `ImageDataGenerator`
+provides one; see [preprocessing](../preprocessing/preprocessing.md).
+
+```python
+from neutro.preprocessing.image import ImageDataGenerator
+
+datagen = ImageDataGenerator(rescale=1 / 255.0)
+flow = datagen.flow(x_train, y_train, batch_size=64)
+```
+
+### A note on data types
+
+The loader does not convert labels or one-hot encode them. Do that before
+constructing it:
+
+```python
+import numpy as np
+
+y_one_hot = np.eye(10)[labels]
+```
+
+For generators, `Model.fit` accepts an object that yields `(x_batch, y_batch)`
+and has `__len__`; `DataLoader` satisfies that contract.

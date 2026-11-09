@@ -4,6 +4,9 @@ from .random import RandomNormal
 from .glorot import GlorotUniform
 from .he import HeNormal
 
+__all__ = ["Initializer", "Zeros", "Ones", "RandomNormal",
+           "GlorotUniform", "HeNormal", "get"]
+
 def get(identifier):
     if identifier == "zeros":
         return Zeros()

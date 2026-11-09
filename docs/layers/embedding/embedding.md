@@ -1,5 +1,11 @@
 # Embedding Layers
 
+> **Implementation note:** The current layer relies on the tape-backed
+> `Layer.backward`; it does not define `backward`. The manual code below is
+> illustrative; the forward math and shapes still apply. See
+> [Layer base class](../base.md#backward-the-tape-backed-fallback).
+
+
 ## Embedding
 
 ### What does this layer do?
@@ -24,11 +30,11 @@ class Embedding(Layer):
         self.output_dim = output_dim
 ```
 
-🔍 **Line 3**: `super().__init__(**kwargs)` calls `Layer.__init__`, setting up `self.params = {}`, `self.grads = {}`, and `self.built = False`. The `input_shape` kwarg is stored for later use in `build`.
+🔍 `super().__init__(**kwargs)` calls `Layer.__init__`, setting up `self.params = {}`, `self.grads = {}`, and `self.built = False`. The `input_shape` kwarg is stored for later use in `build`.
 
-🔍 **Line 4**: `input_dim` is the vocabulary size $V$ — the number of unique tokens. For example, `10000` means tokens are in range `[0, 9999]`.
+🔍 `input_dim` is the vocabulary size $V$ — the number of unique tokens. For example, `10000` means tokens are in range `[0, 9999]`.
 
-🔍 **Line 5**: `output_dim` is the embedding dimension $D$ — how many numbers represent each token. Common values: `128`, `256`, `512`.
+🔍 `output_dim` is the embedding dimension $D$ — how many numbers represent each token. Common values: `128`, `256`, `512`.
 
 #### `build` — creating the embedding table
 
@@ -38,20 +44,20 @@ def build(self, input_shape):
     super().build(input_shape)
 ```
 
-🔍 **Line 2**: Create the embedding matrix. Shape `(V, D)` = `(vocab_size, embed_dim)`. Initialized with small random Gaussian values (mean 0, std 0.01).
+🔍 Create the embedding matrix. Shape `(V, D)` = `(vocab_size, embed_dim)`. Initialized with small random Gaussian values (mean 0, std 0.01).
 
 ```
         embed_dim (= 128)
     ┌──────────────────────┐
-    │ token 0's embedding  │
-V   │ token 1's embedding  │
-o   │   ...                │
-c   │                      │
-a   │ token 9999's embed   │
-b   └──────────────────────┘
+    │ token 0's embedding │
+V │ token 1's embedding │
+o │ ... │
+c │ │
+a │ token 9999's embed │
+b └──────────────────────┘
 ```
 
-🔍 **Line 3**: `super().build(input_shape)` sets `self.built = True` so `build` won't run again.
+🔍 `super().build(input_shape)` sets `self.built = True` so `build` won't run again.
 
 #### `forward` — looking up tokens
 
@@ -61,9 +67,9 @@ def forward(self, inputs, training=False):
     return self.params['embeddings'][self.inputs]
 ```
 
-🔍 **Line 2**: Cast inputs to integer and cache them. We cache `self.inputs` because backward needs it to know *which rows* of the embedding table received gradients.
+🔍 Cast inputs to integer and cache them. We cache `self.inputs` because backward needs it to know *which rows* of the embedding table received gradients.
 
-🔍 **Line 3**: NumPy advanced indexing: `self.params['embeddings'][self.inputs]` — for each integer in `inputs`, fetch the corresponding row of the embedding matrix.
+🔍 NumPy advanced indexing: `self.params['embeddings'][self.inputs]` — for each integer in `inputs`, fetch the corresponding row of the embedding matrix.
 
 📐 **Shape walkthrough**: Input `(B, seq_len)` with values like `[[42, 7, 999, 1]]`. `self.params['embeddings']` is `(V, D)` = `(10000, 128)`. `embeddings[inputs]` returns shape `(B, seq_len, D)` = `(1, 4, 128)`. Token 42 becomes a 128-dimensional vector (row 42 of the matrix), token 7 becomes row 7, etc.
 
@@ -76,9 +82,9 @@ def backward(self, grad_output):
     return None
 ```
 
-🔍 **Line 2**: Start with a zero gradient buffer the same shape as the embedding matrix `(V, D)`.
+🔍 Start with a zero gradient buffer the same shape as the embedding matrix `(V, D)`.
 
-🔍 **Line 3**: `np.add.at(self.grads['embeddings'], self.inputs, grad_output)` — this is the critical line.
+🔍 `np.add.at(self.grads['embeddings'], self.inputs, grad_output)` — this is the critical line.
 
 🔍 **Why `np.add.at` and not `self.grads['embeddings'][self.inputs] = ...`?** Because the same token index might appear **multiple times** in a batch. For example, if the input batch contains token 42 at two different positions, both contributions need to be **summed**, not overwritten.
 
@@ -118,9 +124,9 @@ class TimeEmbedding(Layer):
         self.last_t = None
 ```
 
-🔍 **Line 4**: `self.dim` is the output embedding dimension (e.g., 128 or 256). The input is a single scalar timestep; the output is a `dim`-dimensional vector.
+🔍 `self.dim` is the output embedding dimension (e.g., 128 or 256). The input is a single scalar timestep; the output is a `dim`-dimensional vector.
 
-🔍 **Line 5**: `self.last_t = None` — a cache for the timestep used in the most recent forward pass. We'll store the input timesteps here so backward can return a gradient of the same shape.
+🔍 `self.last_t = None` — a cache for the timestep used in the most recent forward pass. We'll store the input timesteps here so backward can return a gradient of the same shape.
 
 #### `forward`
 
@@ -142,14 +148,14 @@ def forward(self, t, training=False):
     return embeddings
 ```
 
-🔍 **Lines 2-3**: If `t` has shape `(B, 1)`, flatten to `(B,)`. The input might come from a data loader that adds an extra dimension.
+🔍 If `t` has shape `(B, 1)`, flatten to `(B,)`. The input might come from a data loader that adds an extra dimension.
 
-🔍 **Line 5**: `half_dim = self.dim // 2`. Since each frequency produces both a sin and a cos, we need only half as many frequencies as the total dimension.
+🔍 `half_dim = self.dim // 2`. Since each frequency produces both a sin and a cos, we need only half as many frequencies as the total dimension.
 
-🔍 **Lines 6-7**: Build the frequency schedule. This is the key precomputation:
+🔍 Build the frequency schedule. This is the key precomputation:
 
 ```python
-embeddings = np.log(10000) / (half_dim - 1)           # scalar
+embeddings = np.log(10000) / (half_dim - 1) # scalar
 embeddings = np.exp(np.arange(half_dim) * -embeddings) # (half_dim,)
 ```
 
@@ -159,15 +165,15 @@ embeddings = np.exp(np.arange(half_dim) * -embeddings) # (half_dim,)
 
 These are the $1/10000^{2i/D}$ terms from the formula.
 
-🔍 **Line 8**: Outer product: `t[:, None]` is `(B, 1)`, `embeddings[None, :]` is `(1, half_dim)`. Result: `(B, half_dim)` — each timestep multiplied by each frequency.
+🔍 Outer product: `t[:, None]` is `(B, 1)`, `embeddings[None, :]` is `(1, half_dim)`. Result: `(B, half_dim)` — each timestep multiplied by each frequency.
 
 📐 **Shape**: `t` = `[0, 1, 2, ..., 999]` (batch of 1000 timesteps), `embeddings` = `[1.0, 0.84, ..., 0.0001]` (64 frequencies). Result: `(1000, 64)` — row `i` is `t_i * frequencies`.
 
-🔍 **Line 9**: Apply `sin` and `cos` to get the final encoding, then concatenate along the feature axis.
+🔍 Apply `sin` and `cos` to get the final encoding, then concatenate along the feature axis.
 
 📐 **Shape**: Each branch is `(B, half_dim)`. `concatenate(axis=1)` → `(B, dim)` if `dim` is even, which pairs sin(ωt) and cos(ωt) for each frequency.
 
-🔍 **Lines 10-11**: If `dim` is odd, pad with one extra column of zeros. `np.pad(embeddings, ((0,0), (0,1)))` adds a zero column at the end.
+🔍 If `dim` is odd, pad with one extra column of zeros. `np.pad(embeddings, ((0,0), (0,1)))` adds a zero column at the end.
 
 🔍 **Why no `build` step?** The frequencies are *deterministic* — they depend only on `dim`, not on the input shape. There are no learnable parameters, so there's nothing to build.
 
@@ -178,7 +184,7 @@ def backward(self, grad_output):
     return np.zeros_like(self.last_t)
 ```
 
-🔍 **Line 2**: Return a zero gradient with the same shape as the input timesteps.
+🔍 Return a zero gradient with the same shape as the input timesteps.
 
 🔍 **Why zeros?** The timesteps `t` are not learnable parameters — they're fixed inputs chosen by the diffusion process (e.g., `t = 0, 1, 2, ..., 999`). There's no gradient to propagate back to them. The TimeEmbedding layer is purely a feature transformation; the actual learning happens in the layers that consume its output.
 
@@ -197,27 +203,27 @@ import numpy as np
 # Token Embedding
 vocab_size, embed_dim = 10000, 128
 emb = Embedding(input_dim=vocab_size, output_dim=embed_dim)
-tokens = np.array([[42, 7, 999, 1]])        # (1, 4)
+tokens = np.array([[42, 7, 999, 1]]) # (1, 4)
 x = emb(tokens)
-print(f"Token embedding shape: {x.shape}")  # (1, 4, 128)
+print(f"Token embedding shape: {x.shape}") # (1, 4, 128)
 
 # Backward: check sparse accumulation
 dL_dy = np.random.randn(1, 4, 128)
 emb.backward(dL_dy)
-print(f"Embedding grad shape: {emb.grads['embeddings'].shape}")  # (10000, 128)
-print(f"Rows with non-zero gradient: {np.count_nonzero(np.any(emb.grads['embeddings'] != 0, axis=1))}")  # 3 (tokens 42, 7, 999)
+print(f"Embedding grad shape: {emb.grads['embeddings'].shape}") # (10000, 128)
+print(f"Rows with non-zero gradient: {np.count_nonzero(np.any(emb.grads['embeddings'] != 0, axis=1))}") # 3 (tokens 42, 7, 999)
 
 # TimeEmbedding (sinusoidal positional encoding)
 te = TimeEmbedding(dim=256)
-timesteps = np.array([0, 1, 50, 999])       # (4,)
+timesteps = np.array([0, 1, 50, 999]) # (4,)
 z = te(timesteps)
-print(f"Time embedding shape: {z.shape}")   # (4, 256)
-print(f"Timestep 0 encoding (first 8 dims): {z[0, :8]}")  # sin(0) = 0, cos(0) = 1 for all frequencies
+print(f"Time embedding shape: {z.shape}") # (4, 256)
+print(f"Timestep 0 encoding (first 8 dims): {z[0, :8]}") # sin(0) = 0, cos(0) = 1 for all frequencies
 
 # Backward returns zeros (timesteps aren't learned)
 grad = te.backward(np.random.randn(4, 256))
-print(f"Input gradient shape: {grad.shape}")  # (4,)
-print(f"All zeros?: {np.all(grad == 0)}")     # True
+print(f"Input gradient shape: {grad.shape}") # (4,)
+print(f"All zeros?: {np.all(grad == 0)}") # True
 ```
 
 ## References

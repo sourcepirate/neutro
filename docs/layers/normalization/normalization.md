@@ -1,5 +1,11 @@
 # RMSNorm and GroupNorm
 
+> **Implementation note:** The current layer relies on the tape-backed
+> `Layer.backward`; it does not define `backward`. The manual code below is
+> illustrative; the forward math and shapes still apply. See
+> [Layer base class](../base.md#backward-the-tape-backed-fallback).
+
+
 ## RMSNorm
 
 ### What does this layer do?
@@ -12,7 +18,7 @@ Why remove the mean? Empirical results from Llama, Qwen, and DeepSeek show that 
 
 $$\text{RMS}(x) = \sqrt{\frac{1}{D} \sum_{i=1}^{D} x_i^2 + \epsilon} \quad\quad y = \frac{x}{\text{RMS}(x)} \cdot \gamma$$
 
-No `beta` parameter, no mean computation — just a single learnable `weight` (also called `gamma`).
+No `beta` parameter, no mean computation — just a single learnable `gamma` (often called `weight` in other libraries).
 
 The RMS is computed `axis=-1` (the feature dimension), same as LayerNorm.
 
@@ -27,13 +33,13 @@ def __init__(self, epsilon=1e-6, **kwargs):
 
 def build(self, input_shape):
     self.dim = input_shape[-1]
-    self.params['weight'] = np.ones(self.dim)
+    self.params['gamma'] = np.ones(self.dim)
     super().build(input_shape)
 ```
 
-🔍 **Only one parameter**: RMSNorm has `weight` but no `beta`. LayerNorm has `gamma` and `beta`. This saves 50% of the normalization parameters.
+🔍 **Only one parameter**: RMSNorm has `gamma` but no `beta`. LayerNorm has `gamma` and `beta`. This saves 50% of the normalization parameters.
 
-📐 **`weight`**: Shape `(D,)` — one scalar per feature dimension. Starts as all ones (identity).
+📐 **`gamma`**: Shape `(D,)` — one scalar per feature dimension. Starts as all ones (identity).
 
 #### `forward`
 
@@ -42,7 +48,7 @@ def forward(self, x, training=False):
     self.x = x
     self.rms = np.sqrt(np.mean(x**2, axis=-1, keepdims=True) + self.epsilon)
     self.x_norm = x / self.rms
-    return self.x_norm * self.params['weight']
+    return self.x_norm * self.params['gamma']
 ```
 
 🔍 **`np.mean(x**2, axis=-1, keepdims=True)`**: Notice we compute `x²` first (element-wise square), then average over the feature axis. This is RMS — no mean-centering.
@@ -59,16 +65,16 @@ def forward(self, x, training=False):
 
 ```python
 def backward(self, grad_output):
-    self.grads['weight'] = np.sum(grad_output * self.x_norm, axis=(0, 1))
+    self.grads['gamma'] = np.sum(grad_output * self.x_norm, axis=(0, 1))
 
     N = self.dim
-    grad_x_norm = grad_output * self.params['weight']
+    grad_x_norm = grad_output * self.params['gamma']
     sum_grad_x = np.sum(grad_x_norm * self.x, axis=-1, keepdims=True)
     dx = (grad_x_norm / self.rms) - (self.x * sum_grad_x / (N * self.rms**3))
     return dx
 ```
 
-📐 **`self.grads['weight']`**: Summing over axes `(0, 1)` — the batch and sequence dimensions. For a `(B, S, D)` gradient, this produces `(D,)`.
+📐 **`self.grads['gamma']`**: Summing over axes `(0, 1)` — the batch and sequence dimensions. For a `(B, S, D)` gradient, this produces `(D,)`.
 
 🔍 **`grad_x_norm`**: The gradient through the `weight` scale, same concept as `dx_norm` in LayerNorm.
 
@@ -216,7 +222,7 @@ Applied **independently per group** because the sums are over group-specific axe
 |---|---|---|---|---|
 | LayerNorm | `(D)` — features | γ, β | No | Transformers |
 | BatchNorm | `(N, H, W)` — batch/spatial | γ, β | Yes (mean, var) | CNNs (big batch) |
-| RMSNorm | `(D)` — features | weight | No | Llama, DeepSeek |
+| RMSNorm | `(D)` — features | gamma | No | Llama, DeepSeek |
 | GroupNorm | `(H, W, C//G)` — spatial + sub-channels | γ, β | No | Vision (small batch) |
 
 ## References

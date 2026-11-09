@@ -1,11 +1,32 @@
 import numpy as np
 import pytest
+from neutro.autograd import GradientTape, Tensor
 from neutro.layers.attention.kv_cache import KVCache
 from neutro.layers.attention.flash_attention import FlashAttention
 from neutro.layers.attention.mla import MultiHeadLatentAttention
 from neutro.models.language.llama import LlamaTiny
 from neutro.models.language.deepseek import DeepSeekV2Tiny
 from neutro.models.language.gpt import GPT2
+
+def test_kv_cache_preserves_autograd_tensors():
+    """Concatenation must go through the tape, not np.concatenate."""
+    cache = KVCache()
+    k1 = Tensor(np.ones((1, 2, 1, 4)))
+    v1 = Tensor(np.ones((1, 2, 1, 4)))
+    cache.update(k1, v1, layer_id=0)
+
+    k2 = Tensor(np.ones((1, 2, 1, 4)) * 2)
+    with GradientTape() as tape:
+        tape.watch(k2)
+        k_out, _ = cache.update(k2, v1, layer_id=0)
+        loss = k_out.sum()
+
+    tape.gradient(loss, [k2])
+    assert isinstance(k_out, Tensor)
+    assert k_out.shape == (1, 2, 2, 4)
+    assert k2.grad.shape == (1, 2, 1, 4)
+    np.testing.assert_allclose(k2.grad, 1.0)
+
 
 def test_kv_cache_basic():
     cache = KVCache()

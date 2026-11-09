@@ -1,34 +1,30 @@
 # KerasTensor, Node, and the Functional API Graph Engine
 
-## Theory
+The Functional API builds models as directed acyclic graphs (DAGs) instead of
+linear stacks. Before real data exists, the model needs a way to track symbolic
+data flow.
 
-The Functional API lets you build models as directed acyclic graphs (DAGs) of layers, rather than as linear stacks. This requires a mechanism to track *symbolic* data flow during model construction, before any real data is seen.
+Source: `neutro/engine/node.py`.
 
-Two core classes enable this:
+---
 
-- **`KerasTensor`**: A symbolic placeholder representing the *future* output of a layer. It carries a `shape` but no actual data.
-- **`Node`**: A record of one *call* to a layer. It links input `KerasTensor`s → output `KerasTensor`s and is stored on the layer's `_inbound_nodes` list.
+## The two objects
 
-When you write `outputs = Dense(32)(inputs)`, the layer's `__call__` method detects that `inputs` is a `KerasTensor`, builds the layer (if needed), computes the output shape symbolically, wraps it in a new `KerasTensor`, and records a `Node`. No NumPy computation occurs.
-
-Later, `Model._init_graph` traverses the graph backward from the outputs to discover all reachable `Node`s and `Layer`s, producing a topological ordering used for forward and backward execution.
-
-## Implementation Guide
-
-### `KerasTensor` — `neutro/engine/node.py:3-13`
+### `KerasTensor`
 
 ```python
 class KerasTensor:
     def __init__(self, shape, node=None, name=None):
         self.shape = shape
-        self.node = node      # The Node that produced this tensor
+        self.node = node
         self.name = name
 ```
 
-- `shape` is a tuple like `(None, 32)` — the batch dimension is `None` (unknown until runtime).
-- `node` is set when a `Node` is created and links back to the producing layer.
+- `shape` is a tuple like `(None, 32)`; the batch axis is `None` until runtime.
+- `node` points back to the `Node` that produced this tensor.
+- It carries no data.
 
-### `Node` — `neutro/engine/node.py:15-38`
+### `Node`
 
 ```python
 class Node:
@@ -36,37 +32,54 @@ class Node:
         self.layer = layer
         self.input_tensors = input_tensors
         self.output_tensors = output_tensors
+        if not hasattr(layer, '_inbound_nodes'):
+            layer._inbound_nodes = []
         layer._inbound_nodes.append(self)
-        # Link output tensors back to this node
-        if isinstance(output_tensors, list):
-            for t in output_tensors:
-                t.node = self
-        else:
-            output_tensors.node = self
+        ...
 ```
 
-Key behaviors:
-- **Registration**: The node registers itself on `layer._inbound_nodes`, enabling multi-parent graph traversal.
-- **One layer, many nodes**: A shared layer used 3 times will have 3 entries in `_inbound_nodes`, each with different input/output tensors.
-- **List outputs**: Layers like `Add` that take lists of inputs store the lists in `input_tensors`. Multi-output layers store lists in `output_tensors`.
+A `Node` records one **call** to a layer:
 
-### How `Layer.__call__` triggers Node creation — `neutro/layers/base.py:67-105`
+- `input_tensors` -> layer -> `output_tensors`.
+- It registers itself on `layer._inbound_nodes`.
+- Multi-output layers store a list in `output_tensors`.
+- Shared layers get one `Node` entry per call.
 
-The symbolic path (line 77-97):
+`_inbound_nodes` is how `Model` discovers graph connections for `summary()`.
+
+---
+
+## How symbolic calls happen
+
+`Layer.__call__` checks whether the input is symbolic:
 
 ```python
-if is_symbolic:
-    if not self.built:
-        self.build(input_shapes)           # e.g., Dense.build((None, 10))
-    output_shape = self.compute_output_shape(input_shapes)
-    output_tensors = KerasTensor(shape=output_shape)
-    Node(self, input_tensors=inputs, output_tensors=output_tensors)
-    return output_tensors
+def __call__(self, inputs, *args, **kwargs):
+    if self._is_symbolic_input(inputs):
+        return self._symbolic_call(inputs)
+    return self._eager_call(inputs, args, kwargs)
 ```
 
-This is a **zero-computation** path: no `forward` is called, only shape inference.
+`_symbolic_call` does **no computation**:
 
-## Graph Discovery (`Model._init_graph`) — `neutro/models/base_model.py:25-62`
+```python
+input_shapes = [i.shape for i in inputs] if isinstance(inputs, list) else inputs.shape
+if not self.built:
+    self.build(input_shapes)
+output_shape = self.compute_output_shape(input_shapes)
+output_tensors = KerasTensor(shape=output_shape)
+Node(self, input_tensors=inputs, output_tensors=output_tensors)
+return output_tensors
+```
+
+It builds the layer if needed, infers the output shape, creates a new
+`KerasTensor`, and records the connection.
+
+---
+
+## Graph discovery
+
+`Model._init_graph` walks backward from the output tensors:
 
 ```python
 def traverse(tensor):
@@ -74,40 +87,61 @@ def traverse(tensor):
         node = tensor.node
         if node not in visited_nodes:
             visited_nodes.add(node)
-            # Recursively visit inputs
-            if isinstance(node.input_tensors, list):
-                for t in node.input_tensors:
-                    traverse(t)
-            else:
-                traverse(node.input_tensors)
+            for t in node.input_tensors:
+                traverse(t)
             nodes_ordered.append(node)
 ```
 
-This produces `_nodes_ordered` in **reverse topological order** (inputs before outputs). The backward pass iterates `reversed(_nodes_ordered)`.
+This is a post-order DFS. `nodes_ordered` ends up in forward execution order;
+`Model.backward` iterates `reversed(nodes_ordered)`.
 
-## Usage Example
+`Model` also collects unique layers from the ordered nodes, which is what
+`summary()` and the optimizer traverse.
+
+---
+
+## Forward execution
 
 ```python
-from neutro.layers import Input, Dense
-from neutro.models import Model
-from neutro.engine.node import KerasTensor, Node
+tensor_map = {}
+tensor_map[id(model.inputs)] = inputs
 
-# Symbolic construction
-inputs = Input(shape=(4,))          # returns a KerasTensor
-x = Dense(8, activation='relu')(inputs)  # Layer.__call__ creates a Node
-outputs = Dense(1)(x)
-
-# Inspect the graph
-print(type(inputs))          # <class 'KerasTensor'>
-print(inputs.shape)          # (None, 4)
-print(outputs.node.layer)    # Dense(1) — the final layer
-
-# Model discovers nodes via traversal
-model = Model(inputs=inputs, outputs=outputs)
-print(len(model._nodes_ordered))  # Number of Nodes discovered
+for node in model._nodes_ordered:
+    if isinstance(node.layer, InputLayer):
+        continue
+    node_inputs = tensor_map.get(id(node.input_tensors))
+    output = node.layer.forward(node_inputs, training=training)
+    node.layer._last_inputs = as_tensor(node_inputs)
+    node.layer._last_kwargs = {'training': training}
+    node.state = model._capture_layer_state(node.layer)
+    tensor_map[id(node.output_tensors)] = output
 ```
 
-## References
+- `InputLayer` nodes are skipped; user data is seeded into `tensor_map`.
+- Each node captures a deep copy of its layer state after forward. This is how
+  a shared layer can appear in multiple branches and still backward correctly.
 
-- Chollet, F. (2015). **Keras** — the Functional API was introduced in Keras 1.0. [GitHub](https://github.com/keras-team/keras)
-- Keras Functional API Guide. [Keras.io](https://keras.io/guides/functional_api/)
+---
+
+## Backward execution
+
+`Model.backward` runs the nodes in reverse:
+
+1. Look up the gradient for this node's outputs.
+2. Restore the captured state for this call.
+3. Clear the layer's grads.
+4. Call `node.layer.backward(grad_output)`.
+5. Accumulate parameter gradients for shared layers.
+6. Add input gradients to the graph's `grad_map`.
+
+The layer's `backward` is usually the base tape-backed implementation; see
+[Layer base class](../layers/base.md#backward-the-tape-backed-fallback).
+
+---
+
+## Read next
+
+- [Model and Sequential](../models/model.md)
+- [Layer base class](../layers/base.md)
+- [InputLayer](../layers/core/input_layer.md)
+- [Architecture map](../ARCHITECTURE.md)

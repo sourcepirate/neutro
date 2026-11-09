@@ -11,12 +11,10 @@ These functions implement the image-to-column transformation that converts convo
 
 ```python
 def im2col(x, kernel_size, strides, padding='valid'):
-    # Fancy indexing to extract sliding windows
-    ...
+    # Fancy indexing to extract sliding windows...
 
 def col2im(grad_cols, input_shape, kernel_size, strides):
-    # Accumulate gradients back to input positions
-    ...
+    # Accumulate gradients back to input positions...
 ```
 
 Used by `Conv2D` and `MaxPooling2D` for efficient forward/backward computation.
@@ -53,8 +51,7 @@ class GaussianDiffusion:
 
     def p_sample(self, model, x_t, t):
         # Reverse step: denoise x_t using the model
-        predicted_noise = model(x_t, t)
-        ...
+        predicted_noise = model(x_t, t)...
 ```
 
 ## visualization — `neutro/utils/visualization.py`
@@ -63,8 +60,7 @@ Provides `plot_attention_weights` for visualizing attention patterns as heatmaps
 
 ```python
 def plot_attention_weights(attention_weights, tokens, layer_name=None):
-    # Matplotlib heatmap of attention scores
-    ...
+    # Matplotlib heatmap of attention scores...
 ```
 
 ## Usage Example

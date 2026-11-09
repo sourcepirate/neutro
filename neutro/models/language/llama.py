@@ -1,40 +1,12 @@
 from ..base_model import Sequential
-from ...activations.silu import SiLU
+from ...layers.core.swiglu_mlp import SwiGLUMLP
 from ...layers.base import Layer
 from ...layers.attention.flash_attention import FlashAttention
 from ...layers.core.dense import Dense
 from ...layers.embedding.embedding import Embedding
 from ...layers.normalization.rmsnorm import RMSNorm
 
-class LlamaMLP(Layer):
-    """
-    The Llama MLP using SwiGLU.
-
-    SwiGLU(x) = (SiLU(x @ W1) * (x @ W3)) @ W2
-
-    Shapes:
-        x: (B, S, D) → gate: (B, S, U) → SiLU → (B, S, U)
-        value: (B, S, U) → mul: (B, S, U) → (B, S, D)
-    """
-    def __init__(self, dim, hidden_dim, **kwargs):
-        super().__init__(**kwargs)
-        self.w1 = Dense(hidden_dim)
-        self.w2 = Dense(dim)
-        self.w3 = Dense(hidden_dim)
-        self.silu = SiLU()
-
-    def build(self, input_shape):
-        self.w1.build(input_shape)
-        self.w2.build((input_shape[0], input_shape[1], self.w1.units))
-        self.w3.build(input_shape)
-        super().build(input_shape)
-
-    def forward(self, x, training=False):
-        gate = self.w1(x, training)
-        activated_gate = self.silu(gate)
-        value = self.w3(x, training)
-        multiplied = activated_gate * value
-        return self.w2(multiplied, training)
+LlamaMLP = SwiGLUMLP
 
 class LlamaBlock(Layer):
     """

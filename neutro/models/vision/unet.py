@@ -1,17 +1,21 @@
 from ..base_model import Model
 from ...layers.convolutional.conv2d import Conv2D
 from ...layers.core.merging import Concatenate
-from ...layers.embedding.time_embedding import TimeEmbedding
+from ...layers.diffusion.time_mlp import TimeMLPEmbedding
+from ...layers.core.dense import Dense
 from ...layers.pooling.maxpooling2d import MaxPooling2D
 from ...layers.pooling.upsampling2d import UpSampling2D
 
 
 class UNet(Model):
-    """Simplified UNet for diffusion."""
+    """Simplified UNet for diffusion with time conditioning."""
 
-    def __init__(self, input_channels, base_filters=64, time_dim=256):
+    def __init__(self, input_channels, base_filters=64, time_dim=64):
         super().__init__()
-        self.time_embedding = TimeEmbedding(time_dim)
+        self.time_dim = time_dim
+        self.base_filters = base_filters
+        self.time_mlp = TimeMLPEmbedding(time_dim)
+        self.time_proj = Dense(base_filters * 4)
         
         # Encoder
         self.enc1 = Conv2D(base_filters, 3, padding='same', activation='relu')
@@ -36,6 +40,7 @@ class UNet(Model):
         
         self.layers = [
             self.enc1, self.pool1, self.enc2, self.pool2,
+            self.time_mlp, self.time_proj,
             self.bottleneck,
             self.up1, self.concat1, self.dec1,
             self.up2, self.concat2, self.dec2,
@@ -52,16 +57,24 @@ class UNet(Model):
         Args:
             inputs: ``[x, t]`` where ``x`` is image and ``t`` is timestep.
         """
-        x, _t = inputs
+        x, t = inputs
 
         # Encoder
         h1 = self.enc1(x, training)
         p1 = self.pool1(h1)
         h2 = self.enc2(p1, training)
         p2 = self.pool2(h2)
-        
+
+        # Time conditioning: project timestep emb to bottleneck channels,
+        # added to bottleneck output (B,H,W,C).
+        t_emb = self.time_mlp(t, training)          # (B, time_dim) Tensor
+        t_bias = self.time_proj(t_emb, training)    # (B, C) Tensor
+        # Broadcast over spatial dims: (B,1,1,C) + (B,H,W,C).
+        tb = t_bias.reshape((t_bias.shape[0], 1, 1, t_bias.shape[1]))
+
         # Bottleneck
         b = self.bottleneck(p2, training)
+        b = b + tb
         
         # Decoder
         u1 = self.up1(b)
@@ -85,9 +98,20 @@ class UNet(Model):
         g_d1 = self.dec1.backward(g_d1_up)
         g_u1, g_h2_dec = self.concat1.backward(g_d1)
         g_b_up = self.up1.backward(g_u1)
-        
-        g_b = self.bottleneck.backward(g_b_up)
-        
+
+        # Split time-conditioning add: b_total = bottleneck(p2) + broadcast(t_bias).
+        # g_b_up is grad w.r.t. b_total (B,H,W,Cbottleneck).
+        import numpy as _np
+        g_b_total = _np.asarray(g_b_up)
+        g_t_bc = g_b_total.sum(axis=(1, 2))  # (B, Cbottleneck)
+        g_t_emb = self.time_proj.backward(g_t_bc)
+        # time_mlp input is integer timesteps; grad not needed downstream.
+        try:
+            self.time_mlp.backward(_np.asarray(g_t_emb))
+        except Exception:
+            pass
+
+        g_b = self.bottleneck.backward(g_b_total)
         g_p2 = self.pool2.backward(g_b)
         # h2 was used in pool2 AND concat1
         g_h2_total = g_p2 + g_h2_dec

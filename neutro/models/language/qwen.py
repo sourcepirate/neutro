@@ -2,7 +2,14 @@ from ..base_model import Sequential
 from ...layers.embedding.embedding import Embedding
 from ...layers.normalization.rmsnorm import RMSNorm
 from ...layers.core.dense import Dense
-from .llama import LlamaBlock
+from ...layers.transformer.qwen_block import QwenBlock
+from ...layers.transformer.moe_block import MoETransformerBlock
+
+
+def _qwen_block(dim, n_heads, hidden_mult=3.5):
+    n_kv = max(1, n_heads // 4)
+    return QwenBlock(dim, n_heads, n_kv_heads=n_kv,
+                     hidden_dim=int(dim * hidden_mult))
 
 def Qwen1Tiny(vocab_size, seq_len, dim=512, n_layers=4, n_heads=8):
     """
@@ -17,7 +24,7 @@ def Qwen1Tiny(vocab_size, seq_len, dim=512, n_layers=4, n_heads=8):
     
     for _ in range(n_layers):
         # Qwen 1 often used biases in attention
-        model.add(LlamaBlock(dim, n_heads, n_heads, dim // n_heads, int(dim * 3.5)))
+        model.add(_qwen_block(dim, n_heads))
         
     model.add(RMSNorm())
     # Tie embeddings: the output Dense layer uses the same weights as Embedding
@@ -38,20 +45,35 @@ def Qwen2Tiny(vocab_size, seq_len, dim=512, n_layers=4, n_heads=8):
     
     for _ in range(n_layers):
         # GQA is usually num_heads / 4 groups
-        n_kv_heads = max(1, n_heads // 4)
-        model.add(LlamaBlock(dim, n_heads, n_kv_heads, dim // n_heads, int(dim * 3.5)))
+        model.add(_qwen_block(dim, n_heads))
         
     model.add(RMSNorm())
     model.add(Dense(vocab_size, use_bias=False))
     return model
 
 def Qwen3Tiny(vocab_size, seq_len, dim=512, n_layers=4, n_heads=8):
-    """
-    Qwen 3 (Preview/Speculative):
-    Refined architecture, likely building on Qwen2.5's strengths.
-    """
+    """Alias for a deeper ``Qwen2Tiny``; not the real Qwen3 architecture."""
     return Qwen2Tiny(vocab_size, seq_len, dim, n_layers + 2, n_heads)
 
 def QwenTiny(vocab_size, seq_len, dim=512, n_layers=4, n_heads=8):
     # Alias for Qwen2
     return Qwen2Tiny(vocab_size, seq_len, dim, n_layers, n_heads)
+
+
+def Qwen3MoETiny(vocab_size, seq_len, dim=512, n_layers=4, n_heads=8,
+                 n_experts=16, top_k=4):
+    """Qwen3-MoE style: Qwen blocks with MoE FFN + shared expert.
+
+    Fine-grained SwiGLU experts, top-k routing (Tiny default 16/4).
+    """
+    model = Sequential([
+        Embedding(vocab_size, dim, input_shape=(seq_len,)),
+    ])
+    for _ in range(n_layers):
+        model.add(MoETransformerBlock(
+            dim, n_heads, n_experts=n_experts, top_k=top_k,
+            expert_type='swiglu', expert_hidden_dim=int(dim * 2),
+            use_shared_expert=True, use_mla=False))
+    model.add(RMSNorm())
+    model.add(Dense(vocab_size, use_bias=False))
+    return model

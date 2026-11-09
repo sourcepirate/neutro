@@ -2,34 +2,46 @@
 
 ## Pattern
 
-Every op follows the same pattern:
+Every primitive op is a small `Function` subclass. The public helper wraps it
+and returns a `Tensor`:
 
 ```python
-def some_op(a, b):
-    # 1. Forward: compute output from data
-    out = a.data @ b.data          # or +, -, *, /
+class _Mul(Function):
+    @staticmethod
+    def forward(ctx, a, b):
+        ctx.save_for_backward(a=a, b=b)
+        return a * b
 
-    # 2. Build result Tensor
-    result = _make_result(out, parents=[a, b], op_name='some_op')
+    @staticmethod
+    def backward(ctx, g):
+        a, b = ctx.saved_data["a"], ctx.saved_data["b"]
+        return g * b, g * a
 
-    # 3. Backward closure captures parents and result
-    def bw():
-        g = result.grad.copy()     # upstream gradient
-        # compute grad for each parent, accumulate
-        if a.requires_grad:
-            _acc_grad(a, some_grad_formula(g, ...))
-        if b.requires_grad:
-            _acc_grad(b, some_grad_formula(g, ...))
 
-    result._backward = bw
-    return result
+def mul(a, b):
+    return _Mul.apply(a, b)
 ```
 
-🔍 **`result.grad.copy()`**: We `.copy()` to avoid aliasing issues when the same gradient array is used in multiple computations.
+`Function.apply` does the bookkeeping:
 
-🔍 **`if parent.requires_grad:`**: Skip gradient computation for non-grad parents. This avoids useless work and prevents errors if a non-grad parent is a Tensor with `grad=None`.
+1. Split `Tensor` inputs from plain data.
+2. Run `forward` on the NumPy arrays.
+3. If a tape is active and an input is watched, record a backward closure.
+4. Wrap the result in a `Tensor`.
 
-🔍 **Broadcasting**: All binary ops call `broadcast_backward(grad, original_shape)` before accumulating. This ensures gradients are correctly summed over broadcast dimensions.
+There is no `requires_grad` flag. The tape decides what to record based on
+`tape.watch(...)`; see [`GradientTape`](tape.md).
+
+🔍 **Saved values**: `ctx.save_for_backward` stores NumPy arrays, not Tensors.
+The backward pass cannot build a second-order graph, which keeps the engine
+small.
+
+🔍 **Broadcasting**: `Function.apply` calls `utils.broadcast_backward` on each
+returned gradient. This sums over axes that were broadcast in the forward pass,
+so a `(B, U)` gradient can become `(U,)` for a bias.
+
+🔍 **Multiple inputs**: `backward` returns one gradient per Tensor input, in the
+order the tensors appeared. Non-Tensor arguments get `None` in their slot.
 
 ## Arithmetic Operations
 
@@ -153,7 +165,7 @@ For batched matmul, we use `np.swapaxes` on the last two dimensions instead of `
 
 **Forward**: `1 / (1 + exp(-x))`
 
-**Backward**: `g * s * (1 - s)` where `s = sigmoid(x)`. 
+**Backward**: `g * s * (1 - s)` where `s = sigmoid(x)`.
 
 📐 **Derivative**: `sigmoid'(x) = sigmoid(x) * (1 - sigmoid(x))`. The backward recomputes `s` from `x.data` in the closure.
 
@@ -187,4 +199,6 @@ For batched matmul, we use `np.swapaxes` on the last two dimensions instead of `
 
 ## Read next
 
-- `docs/autograd/adapter.md` — Bridging autograd into existing `neutro` training
+- [GradientTape](tape.md) — how recorded ops are replayed backward
+- [Function](function.md) — custom ops with explicit forward/backward
+- [Layer base class](../layers/base.md) — how layers use the tape

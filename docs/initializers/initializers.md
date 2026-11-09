@@ -39,7 +39,7 @@ They are instantiated in layer `__init__` and called in `build`:
 
 ```python
 class Dense(Layer):
-    def __init__(self, units, kernel_initializer='glorot_uniform', ...):
+    def __init__(self, units, kernel_initializer='glorot_uniform',...):
         self.kernel_initializer = get_initializer(kernel_initializer)
 
     def build(self, input_shape):

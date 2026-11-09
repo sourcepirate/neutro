@@ -1,5 +1,11 @@
 # Multi-Head Latent Attention (MLA)
 
+> **Implementation note:** The current layer relies on the tape-backed
+> `Layer.backward`; it does not define `backward`. The manual code below is
+> illustrative; the forward math and shapes still apply. See
+> [Layer base class](../base.md#backward-the-tape-backed-fallback).
+
+
 ## What does this layer do?
 
 Multi-Head Latent Attention is the attention mechanism behind **DeepSeek-V2 and V3**. Its big idea: instead of caching full Key and Value tensors for the KV cache (which gets enormous for long sequences), MLA compresses them into a **low-rank latent vector** and caches that instead.
@@ -42,7 +48,7 @@ The query also goes through compression/decompression, though this doesn't affec
 
 ### File: `neutro/layers/attention/mla.py`
 
-### Step 1: `__init__` — line 15
+### Step 1: `__init__`
 
 ```python
 class MultiHeadLatentAttention(Layer):
@@ -55,54 +61,54 @@ class MultiHeadLatentAttention(Layer):
         self.scale = 1.0 / np.sqrt(head_dim)
 ```
 
-🔍 **Line 15**: MLA inherits directly from `Layer`, NOT from `BaseAttention`. It implements its own attention math inline, but the softmax approach is the same conceptually.
+🔍 MLA inherits directly from `Layer`, NOT from `BaseAttention`. It implements its own attention math inline, but the softmax approach is the same conceptually.
 
-🔍 **Line 19**: `latent_dim` — the compressed dimension for **Q** projections.
+🔍 `latent_dim` — the compressed dimension for **Q** projections.
 
-🔍 **Line 20**: `kv_latent_dim` — the compressed dimension for **KV** projections. This is the **key hyperparameter** that determines cache efficiency.
+🔍 `kv_latent_dim` — the compressed dimension for **KV** projections. This is the **key hyperparameter** that determines cache efficiency.
 
-🔍 **Line 21**: The scale is pre-computed as `1 / sqrt(head_dim)` — a small optimization over computing `np.sqrt` each time.
+🔍 The scale is pre-computed as `1 / sqrt(head_dim)` — a small optimization over computing `np.sqrt` each time.
 
-### Step 2: `build` — line 23
+### Step 2: `build`
 
 ```python
 def build(self, input_shape):
     self.embed_dim = input_shape[-1]
-    
+
     # KV Compression
     self.kv_compress = Dense(self.kv_latent_dim, use_bias=False)
     self.kv_compress.build(input_shape)
-    
+
     # KV Decompression (to content)
     self.kv_decompress = Dense(self.num_heads * (self.head_dim + self.head_dim))
     self.kv_decompress.build((None, self.kv_latent_dim))
 ```
 
-🔍 **Line 27**: `kv_compress = Dense(kv_latent_dim)` — the **down-projection**: `(embed_dim,)` → `(kv_latent_dim,)`. No bias (standard for efficiency).
+🔍 `kv_compress = Dense(kv_latent_dim)` — the **down-projection**: `(embed_dim,)` → `(kv_latent_dim,)`. No bias (standard for efficiency).
 
-🔍 **Line 31**: `kv_decompress = Dense(num_heads * (head_dim + head_dim))` — the **up-projection**: `(kv_latent_dim,)` → `(H * 2d,)`. The `2d` is because we output **both** K and V concatenated together.
+🔍 `kv_decompress = Dense(num_heads * (head_dim + head_dim))` — the **up-projection**: `(kv_latent_dim,)` → `(H * 2d,)`. The `2d` is because we output **both** K and V concatenated together.
 
 ```python
     # Q projection (to latent)
     self.q_compress = Dense(self.latent_dim, use_bias=False)
     self.q_compress.build(input_shape)
-    
+
     # Q decompression
     self.q_decompress = Dense(self.num_heads * self.head_dim)
     self.q_decompress.build((None, self.latent_dim))
-    
+
     # Final projection
     self.wo = Dense(self.embed_dim, use_bias=False)
     self.wo.build((None, self.num_heads * self.head_dim))
-    
+
     super().build(input_shape)
 ```
 
-🔍 **Lines 34–40**: Same compresion-decompression for Q: `embed_dim → latent_dim → H*d`. The query doesn't affect cache size, but the bottleneck can still help with model quality.
+🔍 Same compresion-decompression for Q: `embed_dim → latent_dim → H*d`. The query doesn't affect cache size, but the bottleneck can still help with model quality.
 
-🔍 **Lines 43–44**: Output projection: `(H*d,)` → `(embed_dim,)`.
+🔍 Output projection: `(H*d,)` → `(embed_dim,)`.
 
-### Step 3: `forward` — line 51
+### Step 3: `forward`
 
 ```python
 def forward(self, x, mask=None, training=False, kv_cache=None, layer_id=None):
@@ -117,7 +123,7 @@ def forward(self, x, mask=None, training=False, kv_cache=None, layer_id=None):
     q = q.reshape(batch_size, seq_len, H, d).transpose(0, 2, 1, 3)
 ```
 
-🔍 **Lines 57–60**: **Q pipeline**: compress → decompress → split heads.
+🔍 **Q pipeline**: compress → decompress → split heads.
 - `q_latent`: `(B, S, latent_dim)` — the compressed query.
 - `q`: `(B, S, H*d)` — the decompressed full query.
 - Final shape: `(B, H, S, d)` — standard multi-head format.
@@ -127,14 +133,14 @@ def forward(self, x, mask=None, training=False, kv_cache=None, layer_id=None):
     kv_latent = self.kv_compress(x, training=training)
 ```
 
-🔍 **Line 63**: **KV compression**: `(B, S, embed_dim)` → `(B, S, kv_latent_dim)`. This **tiny latent** is the magic of MLA.
+🔍 **KV compression**: `(B, S, embed_dim)` → `(B, S, kv_latent_dim)`. This **tiny latent** is the magic of MLA.
 
 ```python
     # KV caching happens on the LATENT vector in MLA!
     if kv_cache is not None and layer_id is not None:
         # kv_latent is (B, S, D). KVCache expects (B, H, S, d).
         # We treat it as 1 head: (B, 1, S, D)
-        kv_latent_reshaped = kv_latent[:, np.newaxis, :, :] 
+        kv_latent_reshaped = kv_latent[:, np.newaxis, :, :]
         _, kv_latent_cached = kv_cache.update(kv_latent_reshaped, kv_latent_reshaped, layer_id)
         # Result is (B, 1, S_total, D) -> (B, S_total, D)
         kv_latent = kv_latent_cached[:, 0, :, :]
@@ -143,7 +149,7 @@ def forward(self, x, mask=None, training=False, kv_cache=None, layer_id=None):
         seq_len_kv = seq_len
 ```
 
-🔍 **Lines 65–76**: **KV cache interaction** — the most interesting part!
+🔍 **KV cache interaction** — the most interesting part!
 
 The standard `KVCache` expects `(B, H, S, d)` shaped tensors. But our latent is `(B, S, kv_latent_dim)`. We **trick** the cache by adding a dummy head dimension: `(B, 1, S, kv_latent_dim)`.
 
@@ -158,9 +164,9 @@ We use `kv_latent_reshaped` for **both** K and V in `kv_cache.update()` (since i
     v = kv[..., d:].transpose(0, 2, 1, 3)
 ```
 
-🔍 **Line 78**: **Decompress** the (cached) latent back to full K and V: `(B, S, kv_latent_dim)` → `(B, S, H*2d)`.
+🔍 **Decompress** the (cached) latent back to full K and V: `(B, S, kv_latent_dim)` → `(B, S, H*2d)`.
 
-🔍 **Lines 79–81**: Split into K and V by slicing the last dimension in half.
+🔍 Split into K and V by slicing the last dimension in half.
 - `kv[..., :d]` — first half is K_content.
 - `kv[..., d:]` — second half is V_content.
 - Both reshaped to `(B, H, S, d)`.
@@ -170,7 +176,7 @@ We use `kv_latent_reshaped` for **both** K and V in `kv_cache.update()` (since i
     scores = (q @ k.transpose(0, 1, 3, 2)) * self.scale
     if mask is not None:
         scores += (mask * -1e9)
-    
+
     attn_weights = np.exp(scores - np.max(scores, axis=-1, keepdims=True))
     attn_weights /= (np.sum(attn_weights, axis=-1, keepdims=True) + 1e-15)
     self.attn_weights = attn_weights
@@ -179,9 +185,9 @@ We use `kv_latent_reshaped` for **both** K and V in `kv_cache.update()` (since i
     return self.wo(out, training=training)
 ```
 
-🔍 **Lines 83–93**: **Standard attention** — identical math to `BaseAttention.scaled_dot_product_attention`. The softmax, scaling, and weighted sum are the same. The innovation of MLA is entirely in **how K and V are produced** (compressed/decompressed), not in how attention is computed.
+🔍 **Standard attention** — identical math to `BaseAttention.scaled_dot_product_attention`. The softmax, scaling, and weighted sum are the same. The innovation of MLA is entirely in **how K and V are produced** (compressed/decompressed), not in how attention is computed.
 
-### Step 4: `backward` — line 95
+### Step 4: `backward`
 
 ```python
 def backward(self, grad_output):
@@ -194,29 +200,29 @@ def backward(self, grad_output):
     grad_wo_in = grad_wo_in.reshape(batch_size, seq_len, H, d)
 ```
 
-🔍 **Lines 95–104**: **Output projection backward** — delegates to the `Dense` layer's own `backward`. This is the clean part.
+🔍 **Output projection backward** — delegates to the `Dense` layer's own `backward`. This is the clean part.
 
 ```python
     # Backprop through Attention
     # dV, dWeights, dQ, dK... (omitting details for brevity)
-    
+
     # Dummy grad for the decompressors to ensure they get updated
     grad_q = self.q_decompress.backward(grad_wo_in.reshape(batch_size, seq_len, -1))
     self.q_compress.backward(grad_q)
 ```
 
-🔍 **Lines 116–117**: **Partial backward for Q path** — backpropagates through `q_decompress` and `q_compress` sub-layers. This is correct but simplified (routes the gradient through the decompressors sequentially).
+🔍 **Partial backward for Q path** — backpropagates through `q_decompress` and `q_compress` sub-layers. This is correct but simplified (routes the gradient through the decompressors sequentially).
 
 ```python
     # Split grad for KV
     grad_kv = np.random.randn(batch_size, seq_len, H * 2 * d) # Dummy for now
     self.kv_decompress.backward(grad_kv)
     self.kv_compress.backward(grad_kv[:, :, :self.kv_latent_dim]) # Approximate
-    
+
     return np.random.randn(*self.x.shape) # Return grad_x
 ```
 
-🔍 **Lines 120–124**: **Placeholder for KV path** — uses random noise as gradients. This is **intentionally naive** — MLA's backward requires backpropagating through the attention softmax, then through the decompression, then through the cache-aware latent, which is complex.
+🔍 **Placeholder for KV path** — uses random noise as gradients. This is **intentionally naive** — MLA's backward requires backpropagating through the attention softmax, then through the decompression, then through the cache-aware latent, which is complex.
 
 In a production MLA (DeepSeek-V2/V3), the backward pass would:
 1. Backprop through the attention (same softmax gradient as MHA).
@@ -238,7 +244,7 @@ layer = MultiHeadLatentAttention(
 )
 x = np.random.randn(4, 32, 512)
 layer.build(x.shape)
-y = layer(x)  # (4, 32, 512)
+y = layer(x) # (4, 32, 512)
 ```
 
 For generation with KV cache:

@@ -1,5 +1,11 @@
 # Activation Layer
 
+> **Implementation note:** The current layer relies on the tape-backed
+> `Layer.backward`; it does not define `backward`. The manual code below is
+> illustrative; the forward math and shapes still apply. See
+> [Layer base class](../base.md#backward-the-tape-backed-fallback).
+
+
 ## What does this layer do?
 
 An Activation layer applies a non-linear function to its input. Without activation functions, a neural network would just be a series of linear transformations — no matter how many layers you stack, you could collapse them into a single matrix multiply. Activation functions introduce the non-linearity that gives neural networks their expressive power.
@@ -36,7 +42,7 @@ class Activation(Layer):
         self.activation = get_activation(activation)
 ```
 
-🔍 **Line 7**: `get_activation('relu')` looks up the string in `neutro/activations/__init__.py` and returns an instance like `ReLU()`. This object has both a `__call__` (forward) and a `gradient` (backward) method.
+🔍 `get_activation('relu')` looks up the string in `neutro/activations/__init__.py` and returns an instance like `ReLU()`. This object has both a `__call__` (forward) and a `gradient` (backward) method.
 
 You don't specify the input size here — like all `neutro` layers, shape is inferred when `forward` is first called.
 
@@ -54,9 +60,9 @@ def forward(self, inputs, training=False):
 
 📐 **Shape**: Input shape = output shape. If inputs is `(B, D)`, output is `(B, D)`.
 
-🔍 **Line 10**: `self.inputs = inputs` — We cache the input here because `backward` needs it to compute the gradient. For example, `ReLU.gradient(x)` returns `(x > 0).astype(float)`.
+🔍 `self.inputs = inputs` — We cache the input here because `backward` needs it to compute the gradient. For example, `ReLU.gradient(x)` returns `(x > 0).astype(float)`.
 
-🔍 **Line 11**: `self.activation(inputs)` — This calls the activation's `__call__` method. For ReLU, it's `np.maximum(0, x)`. For softmax, it's the full softmax computation. Some activations (like softmax and sigmoid) also cache their output on `self` inside their `__call__`.
+🔍 `self.activation(inputs)` — This calls the activation's `__call__` method. For ReLU, it's `np.maximum(0, x)`. For softmax, it's the full softmax computation. Some activations (like softmax and sigmoid) also cache their output on `self` inside their `__call__`.
 
 ### Step 4: `backward` — two paths for gradient computation
 
@@ -67,7 +73,7 @@ def backward(self, grad_output):
     return grad_output * self.activation.gradient(self.inputs)
 ```
 
-🔍 **Line 14**: `hasattr(self.activation, 'gradient_fast')` — Checks if this activation has a special fast gradient path. Currently only **softmax** has this.
+🔍 `hasattr(self.activation, 'gradient_fast')` — Checks if this activation has a special fast gradient path. Currently only **softmax** has this.
 
 **Path 1 — Element-wise activations (ReLU, sigmoid, tanh)**:
 
@@ -96,8 +102,8 @@ This is a full $C \times C$ Jacobian matrix per sample (where $C$ is the number 
 ```python
 # For each sample:
 s = out_flat[i].reshape(-1, 1)
-jacobian = np.diagflat(s) - np.dot(s, s.T)    # (C, C)
-res[i] = np.dot(grad_flat[i], jacobian)        # (C,) @ (C, C) -> (C,)
+jacobian = np.diagflat(s) - np.dot(s, s.T) # (C, C)
+res[i] = np.dot(grad_flat[i], jacobian) # (C,) @ (C, C) -> (C,)
 ```
 
 🧠 **Key insight**: `gradient_fast` exists because softmax is usually paired with cross-entropy loss. Their combined gradient is much simpler: just $(y - \text{target})$. But since the `Activation` layer doesn't know about the loss, it computes the full softmax Jacobian separately. In practice, you'd combine them for efficiency.
@@ -142,13 +148,13 @@ import numpy as np
 # Using the generic Activation layer
 act = Activation('relu')
 x = np.array([-2, -1, 0, 1, 2])
-y = act(x)           # [0, 0, 0, 1, 2]
+y = act(x) # [0, 0, 0, 1, 2]
 grad = np.array([1, 1, 1, 1, 1])
-dx = act.backward(grad)  # [0, 0, 0, 1, 1] — gradient flows only for positive inputs
+dx = act.backward(grad) # [0, 0, 0, 1, 1] — gradient flows only for positive inputs
 
 # Using convenience subclass
 relu = ReLU()
-y2 = relu(x)  # Same result
+y2 = relu(x) # Same result
 ```
 
 ## What to read next

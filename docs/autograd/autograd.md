@@ -2,80 +2,117 @@
 
 ## What is this?
 
-`neutro.autograd` is an **educational reverse-mode automatic differentiation engine** built entirely from NumPy, styled after PyTorch's `autograd`.
+`neutro.autograd` is an **educational reverse-mode automatic differentiation
+engine** built entirely from NumPy. It is the engine behind `Layer.backward`
+and `Model.autograd_fit`.
 
-It is **additive and opt-in** — the existing manual `backward()` layers in `neutro` are untouched. This subpackage exists to show **how an autograd engine works under the hood**.
+It is small on purpose. The goal is to show the machinery, not to compete with
+PyTorch.
+
+Source: `neutro/autograd/`.
+
+---
 
 ## Quickstart
 
 ```python
-from neutro.autograd import Tensor
 import numpy as np
+from neutro.autograd import GradientTape, Tensor
 
-a = Tensor(np.array([1.0, 2.0, 3.0]), requires_grad=True)
-b = Tensor(np.array([4.0, 5.0, 6.0]), requires_grad=True)
-c = a * b + b
-loss = c.sum()
-loss.backward()
+x = Tensor(np.array([[1.0, 2.0], [3.0, 4.0]]))
+W = Tensor(np.array([[0.5], [-0.5]]))
 
-print(a.grad)  # [4. 5. 6.]   — d(loss)/da
-print(b.grad)  # [5. 6. 7.]   — d(loss)/db  (a*da/db + db/db = a + 1)
+with GradientTape as tape:
+    tape.watch(W)
+    loss = ((x @ W) ** 2).mean
+
+tape.gradient(loss, [W])
+print(float(loss.data)) # 0.25
+print(W.grad) # [[-2.]
+                           # [-3.]]
 ```
+
+The tape records operations whose inputs are watched, then walks them in reverse
+to fill `.grad`.
+
+---
 
 ## Architecture
 
-| Module | File | Purpose |
-|--------|------|---------|
-| `Tensor` | `tensor.py` | Data + gradient + backward closure |
-| `ops` | `ops.py` | Primitive arithmetic, reductions, activations |
-| `Function` | `function.py` | Explicit forward/backward op API |
-| `utils` | `utils.py` | Topological sort, broadcast backward, grad helpers |
-| `adapter` | `adapter.py` | Bridge to existing `Layer.params/grads` |
+| Module | Purpose |
+|--------|---------|
+| `tensor.py` | `Tensor`: a NumPy array plus a `grad` slot. |
+| `tape.py` | `GradientTape`: records ops and computes reverse-mode gradients. |
+| `ops.py` | Primitive operations (`add`, `matmul`, `softmax`, …) and their backward rules. |
+| `function.py` | `Function`: define a custom op with an explicit forward/backward pair. |
+| `custom_ops.py` | Higher-level `Function`s used by layers (conv, pooling, gather, quantize). |
+| `utils.py` | Broadcast backward, numeric gradient checks. |
+
+There is no `adapter.py` in the current version. The tape is the integration
+point: layers write `forward` with `Tensor` operations and the base
+`Layer.backward` uses the tape.
+
+---
 
 ## How it works
 
-1. **Define-by-run**: Every arithmetic operation (`+`, `*`, `@`, etc.) builds a `Tensor` and attaches a `_backward` closure that captures its parents. The graph is the trace of execution.
+1. **Define-by-run.** Every arithmetic operation on a `Tensor` calls a function
+   in `ops.py`, which creates a new `Tensor` and records a backward rule on the
+   active tape.
+2. **Watch what you differentiate.** Unlike PyTorch, `Tensor` has no
+   `requires_grad` flag. You call `tape.watch(tensor)` explicitly. If no input
+   to an op is watched, the op is not recorded.
+3. **Reverse pass.** `tape.gradient(target, sources)` seeds
+   `d target / d target = 1`, walks the records in reverse, calls each
+   backward rule with the upstream gradient, and accumulates the results.
+4. **No higher-order AD.** Gradients are NumPy arrays, not Tensors. This keeps
+   the implementation readable.
 
-2. **Topological backward**: `Tensor.backward()` topologically sorts the graph from the loss back to the leaves, then calls each `_backward` closure. Closures write `gr.ad` into `Tensor.grad` (accumulating for shared nodes).
+---
 
-3. **No autograd-through-autograd**: Gradients are NumPy arrays, not Tensors. There is no higher-order AD. This keeps the implementation clear and educational.
+## What is covered
 
-## What's covered (v1)
-
-The first version supports core math + linear algebra:
-
-- **Arithmetic**: `add`, `sub`, `mul`, `div`, `neg`, `pow` (constant), `matmul`
-- **Reductions**: `sum`, `mean` (with axis)
-- **Shape ops**: `reshape`, `transpose`, `slice`
-- **Broadcasting**: all binary ops handle broadcasting with correct backward reductions
+- **Arithmetic**: `add`, `sub`, `mul`, `div`, `neg`, `pow`, `matmul`
+- **Reductions**: `sum`, `mean`, `max`
+- **Shape ops**: `reshape`, `transpose`, `slice`, `concatenate`
 - **Activations**: `relu`, `sigmoid`, `tanh`, `silu`, `softmax`
-- **Custom ops**: `Function` base class for defining explicit forward/backward ops
+- **Broadcasting**: binary ops reduce gradients back to the original shape
+- **Custom ops**: `Function` subclasses (convolution, pooling, gather, quantize)
+- **Numeric checks**: `numeric_grad`, `gradclose` in `utils.py`
 
-Not (yet) covered: convolution, pooling, normalization, LSTM steps.
+Not covered: higher-order gradients, in-place op tracking, GPU execution, and
+autograd through the tape's own bookkeeping.
 
-## File-by-file
+---
 
-- `neutro/autograd/tensor.py` — The core `Tensor` class (read the walkthrough)
-- `neutro/autograd/ops.py` — Every primitive operation and its backward rule
-- `neutro/autograd/function.py` — `Function` base class for custom explicit ops
-- `neutro/autograd/utils.py` — Topological sort, broadcast backward, numeric grad check
-- `neutro/autograd/adapter.py` — Bridging autograd `Tensor` into existing `Layer.params/grads`
+## Two ways to use it
 
-## Diff from PyTorch
+### 1. Through layers (the normal path)
 
-| Aspect | PyTorch | neutro.autograd |
-|--------|---------|-----------------|
-| Backend | ATen/C++ | NumPy |
-| Grad type | Tensor | NumPy ndarray |
-| Higher-order AD | Yes | No |
-| In-place ops | Yes | No |
-| Device support | CPU/CUDA/... | CPU only |
+```python
+model.fit(x, y, epochs=1)
+```
 
-The absence of higher-order AD and in-place ops is intentional — it keeps the implementation under ~300 lines and focused on the core algorithm.
+Each layer's base `backward` replays `forward` inside a tape. You do not write
+gradient code for `Dense`, `Conv2D`, attention, and so on.
+
+### 2. Through `Model.autograd_fit` (the whole-model path)
+
+```python
+model.autograd_fit(x, y, epochs=1)
+```
+
+One tape wraps the entire forward pass and loss. This is useful when you want to
+see the whole computation as a single graph.
+
+Both are built on the same `GradientTape`.
+
+---
 
 ## Read next
 
-- `docs/autograd/tensor.md` — How `Tensor` works, line-by-line
-- `docs/autograd/ops.md` — Every operation's math and backward rule
-- `docs/autograd/function.md` — The `Function` base class for custom ops
-- `docs/autograd/adapter.md` — Bridging into existing `neutro` layers
+- [`Tensor`](tensor.md) — data + gradient.
+- [`GradientTape`](tape.md) — record and reverse.
+- [`ops`](ops.md) — every primitive and its backward rule.
+- [`Function`](function.md) — custom ops.
+- [Tutorial 02](../tutorials/02-gradients-and-the-tape.md) — a guided walkthrough.

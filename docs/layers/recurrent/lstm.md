@@ -1,5 +1,11 @@
 # Long Short-Term Memory (LSTM)
 
+> **Implementation note:** The current layer relies on the tape-backed
+> `Layer.backward`; it does not define `backward`. The manual code below is
+> illustrative; the forward math and shapes still apply. See
+> [Layer base class](../base.md#backward-the-tape-backed-fallback).
+
+
 ## What does this layer do?
 
 LSTM (Long Short-Term Memory) is a recurrent layer designed to solve the **vanishing gradient problem** that plagues simple RNNs. It introduces a **cell state** — a "memory highway" that can carry information across many timesteps with minimal gradient decay — controlled by four learned gates.
@@ -39,8 +45,8 @@ $$
 Then split the result into four equal chunks for i, f, c_tilde, o:
 
 ```
-z → [  i  |  f  | c_tilde |  o  ]
-     :units :2U  :3U        :4U
+z → [ i | f | c_tilde | o ]
+     :units :2U :3U :4U
 ```
 
 This is purely an optimization — one big matrix multiply is faster than eight small ones — but mathematically it's equivalent.
@@ -71,9 +77,9 @@ class LSTM(Layer):
 📐 If `features = 32` and `units = 64`, then `W` is `(96, 256)`:
 
 ```
-W = [W_input | W_hidden]   (first features rows from x, next units rows from h)
-          ↑                      ↑
-    shape (32, 256)         shape (64, 256)
+W = [W_input | W_hidden] (first features rows from x, next units rows from h)
+          ↑ ↑
+    shape (32, 256) shape (64, 256)
 ```
 
 Each of the four gates gets `units` columns: columns `0:64` → i-gate, `64:128` → f-gate, `128:192` → c_tilde, `192:256` → o-gate.
@@ -105,48 +111,48 @@ def forward(self, inputs, training=False):
     return self.h_states[:, 1:, :] if self.return_sequences else self.h_states[:, -1, :]
 ```
 
-🔍 **Line 29**: `self.h_states = np.zeros((batch, timesteps + 1, self.units))` — Hidden states, same `T+1` pattern as SimpleRNN: index `0` is `h_0 = 0`.
+🔍 `self.h_states = np.zeros((batch, timesteps + 1, self.units))` — Hidden states, same `T+1` pattern as SimpleRNN: index `0` is `h_0 = 0`.
 
-🔍 **Line 30**: `self.c_states = np.zeros((batch, timesteps + 1, self.units))` — Cell states, also `T+1`. Index `0` is `C_0 = 0`. **Both** `h_states` and `c_states` are cached for backward.
+🔍 `self.c_states = np.zeros((batch, timesteps + 1, self.units))` — Cell states, also `T+1`. Index `0` is `C_0 = 0`. **Both** `h_states` and `c_states` are cached for backward.
 
-🔍 **Line 31**: `self.gates = np.zeros((batch, timesteps, 4 * self.units))` — All four gate pre-activation values for every timestep. Cached for backward.
+🔍 `self.gates = np.zeros((batch, timesteps, 4 * self.units))` — All four gate pre-activation values for every timestep. Cached for backward.
 
 ---
 
 **Inside the loop (t = 0 to T-1):**
 
-🔍 **Line 34**: `concat = np.concatenate([inputs[:, t, :], h_states[:, t, :]], axis=1)`
+🔍 `concat = np.concatenate([inputs[:, t, :], h_states[:, t, :]], axis=1)`
 
 📐 `inputs[:, t, :]` is `(batch, features)`, `h_states[:, t, :]` is `(batch, units)`. Concatenated: `(batch, features + units)`.
 
-🔍 **Line 35**: `z = np.dot(concat, W) + b`
+🔍 `z = np.dot(concat, W) + b`
 
 📐 `(batch, features+units) @ (features+units, 4*units)` → `(batch, 4*units)`.
 
-🔍 **Line 36**: `self.gates[:, t, :] = z` — Save the raw pre-activation for backward.
+🔍 `self.gates[:, t, :] = z` — Save the raw pre-activation for backward.
 
-🔍 **Line 37**: Split `z` into four gates:
+🔍 Split `z` into four gates:
 
 ```python
-i       = sigmoid(z[:, :units])              # input gate
-f       = sigmoid(z[:, units:2*units])       # forget gate
-c_tilde = tanh(z[:, 2*units:3*units])        # candidate
-o       = sigmoid(z[:, 3*units:])            # output gate
+i = sigmoid(z[:, :units]) # input gate
+f = sigmoid(z[:, units:2*units]) # forget gate
+c_tilde = tanh(z[:, 2*units:3*units]) # candidate
+o = sigmoid(z[:, 3*units:]) # output gate
 ```
 
 Note: `i` and `f` use sigmoid (values 0 to 1), `c_tilde` uses tanh (values -1 to 1).
 
-🔍 **Line 38**: `C_t = f * C_{t-1} + i * c_tilde`
+🔍 `C_t = f * C_{t-1} + i * c_tilde`
 
 📐 All four are shape `(batch, units)`. Element-wise operations.
 
 This is the **cell state update**. The forget gate `f` decides how much of the old cell state to keep. The input gate `i` decides how much of the candidate to add. This is the "memory highway" — information can flow through unchanged when `f = 1` and `i = 0`.
 
-🔍 **Line 39**: `h_t = o * tanh(C_t)`
+🔍 `h_t = o * tanh(C_t)`
 
 📐 `(batch, units)`. The output gate controls how much of the cell state is exposed as the hidden state.
 
-🔍 **Line 40**: Return all hidden states or just the last one, depending on `return_sequences`.
+🔍 Return all hidden states or just the last one, depending on `return_sequences`.
 
 📐 Why cache ALL of `h_states`, `c_states`, and `gates`? Because `backward` needs:
 - `h_states[:, t, :]` and `h_states[:, t+1, :]` for every `t`
@@ -194,9 +200,9 @@ def backward(self, grad_output):
 
 🧠 **"The backward loop goes in REVERSE order of the forward loop — that's the 'through time' part of BPTT"**
 
-🔍 **Line 47**: `for t in range(timesteps - 1, -1, -1)` — From `T-1` down to `0`.
+🔍 `for t in range(timesteps - 1, -1, -1)` — From `T-1` down to `0`.
 
-🔍 **Line 48**: `dh = grad_output + dh_next` — Same two-source gradient as SimpleRNN and GRU: from the layer above AND from the future timestep.
+🔍 `dh = grad_output + dh_next` — Same two-source gradient as SimpleRNN and GRU: from the layer above AND from the future timestep.
 
 ---
 
@@ -204,11 +210,11 @@ def backward(self, grad_output):
 
 $$h_t = o_t \cdot \tanh(C_t)$$
 
-🔍 **Line 51-52**: Backprop through `h_t` to get the gradient for the output gate and the cell state:
+🔍 Backprop through `h_t` to get the gradient for the output gate and the cell state:
 
 ```python
 tanh_c = tanh(C_{t+1})
-do = dh * tanh_c       # gradient w.r.t. output gate o
+do = dh * tanh_c # gradient w.r.t. output gate o
 dc = dh * o * (1 - tanh_c**2) + dc_next
 ```
 
@@ -225,17 +231,17 @@ dc = dh * o * (1 - tanh_c**2) + dc_next
 
 $$C_t = f \cdot C_{t-1} + i \cdot \tilde{C}_t$$
 
-🔍 **Line 53**: Split `dc` into gradients for each gate:
+🔍 Split `dc` into gradients for each gate:
 
 ```python
-df = dc * C_{t-1}       # gradient w.r.t. forget gate f
-di = dc * c_tilde       # gradient w.r.t. input gate i
-dc_tilde = dc * i       # gradient w.r.t. candidate c_tilde
+df = dc * C_{t-1} # gradient w.r.t. forget gate f
+di = dc * c_tilde # gradient w.r.t. input gate i
+dc_tilde = dc * i # gradient w.r.t. candidate c_tilde
 ```
 
 These are direct applications of the product rule. Each one is the gradient `dc` multiplied by the *other* operand in the sum.
 
-🔍 Note how `dc_next` is computed at the end (line 59): `dc_next = f * dc`. This is the gradient of `C_t` w.r.t. `C_{t-1}` — the term `f` in `f * C_{t-1}` — which flows backward to the previous timestep.
+🔍 Note how `dc_next` is computed at the end: `dc_next = f * dc`. This is the gradient of `C_t` w.r.t. `C_{t-1}` — the term `f` in `f * C_{t-1}` — which flows backward to the previous timestep.
 
 ---
 
@@ -243,14 +249,14 @@ These are direct applications of the product rule. Each one is the gradient `dc`
 
 Each gate has a different activation:
 
-🔍 **Line 54**: `dz` is a concatenation of four gradient pieces, each multiplied by the derivative of their respective activation:
+🔍 `dz` is a concatenation of four gradient pieces, each multiplied by the derivative of their respective activation:
 
 ```python
 dz = [
-  di * i * (1 - i),              # sigmoid derivative for input gate
-  df * f * (1 - f),              # sigmoid derivative for forget gate
-  dc_tilde * (1 - c_tilde**2),   # tanh derivative for candidate
-  do * o * (1 - o)               # sigmoid derivative for output gate
+  di * i * (1 - i), # sigmoid derivative for input gate
+  df * f * (1 - f), # sigmoid derivative for forget gate
+  dc_tilde * (1 - c_tilde**2), # tanh derivative for candidate
+  do * o * (1 - o) # sigmoid derivative for output gate
   ]
 ```
 
@@ -260,30 +266,30 @@ Concatenated: `(batch, 4*units)` — same shape as the original `z`.
 
 **Step 4: Accumulate weight gradients**
 
-🔍 **Line 55**: `concat = concat([inputs[:, t, :], h_states[:, t, :]])` — Same concatenation as forward.
+🔍 `concat = concat([inputs[:, t, :], h_states[:, t, :]])` — Same concatenation as forward.
 
 📐 `(batch, features + units)`.
 
-🔍 **Line 56**: `d_W += concat.T @ dz`
+🔍 `d_W += concat.T @ dz`
 
 📐 `(features+units, batch) @ (batch, 4*units)` → `(features+units, 4*units)` = shape of `W`.
 
-🔍 **Line 57**: `d_b += sum(dz, axis=0)` → `(4*units,)`.
+🔍 `d_b += sum(dz, axis=0)` → `(4*units,)`.
 
 ---
 
 **Step 5: Compute gradient w.r.t. inputs and previous hidden state**
 
-🔍 **Line 58**: `d_concat = dz @ W.T`
+🔍 `d_concat = dz @ W.T`
 
 📐 `(batch, 4*units) @ (4*units, features+units)` → `(batch, features+units)`.
 
-🔍 **Line 59**: Split `d_concat` back into input gradient and hidden state gradient:
+🔍 Split `d_concat` back into input gradient and hidden state gradient:
 
 ```python
-d_inputs[:, t, :] = d_concat[:, :features]       # gradient for the previous layer
-dh_next = d_concat[:, features:]                  # gradient for previous timestep's hidden state
-dc_next = f * dc                                  # gradient for previous timestep's cell state
+d_inputs[:, t, :] = d_concat[:, :features] # gradient for the previous layer
+dh_next = d_concat[:, features:] # gradient for previous timestep's hidden state
+dc_next = f * dc # gradient for previous timestep's cell state
 ```
 
 📐 `d_inputs[:, t, :]` is `(batch, features)`, `dh_next` is `(batch, units)`, `dc_next` is `(batch, units)`.
@@ -330,19 +336,19 @@ x = np.random.randn(4, 10, 32)
 
 # Forward pass
 y = lstm(x)
-print(f"Output shape: {y.shape}")            # (4, 10, 64)
+print(f"Output shape: {y.shape}") # (4, 10, 64)
 
 # Backward pass
 dL_dy = np.random.randn(4, 10, 64)
 dL_dx = lstm.backward(dL_dy)
-print(f"Input grad shape: {dL_dx.shape}")    # (4, 10, 32)
-print(f"W grad shape: {lstm.grads['W'].shape}")  # (96, 256)
-print(f"b grad shape: {lstm.grads['b'].shape}")  # (256,)
+print(f"Input grad shape: {dL_dx.shape}") # (4, 10, 32)
+print(f"W grad shape: {lstm.grads['W'].shape}") # (96, 256)
+print(f"b grad shape: {lstm.grads['b'].shape}") # (256,)
 
 # With return_sequences=False
 lstm_last = LSTM(units=64, return_sequences=False)
 y_last = lstm_last(x)
-print(f"Last-only output: {y_last.shape}")   # (4, 64)
+print(f"Last-only output: {y_last.shape}") # (4, 64)
 ```
 
 ## What to read next

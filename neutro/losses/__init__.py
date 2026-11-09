@@ -2,7 +2,14 @@ from .base import Loss
 from .mse import MeanSquaredError
 from .categorical_crossentropy import CategoricalCrossentropy
 from .sparse_categorical_crossentropy import SparseCategoricalCrossentropy
+from .masked_sparse_ce import MaskedSparseCrossentropy
 from .vae_loss import VAELoss
+
+__all__ = [
+    "Loss", "MeanSquaredError", "CategoricalCrossentropy",
+    "SparseCategoricalCrossentropy", "MaskedSparseCrossentropy",
+    "VAELoss", "get",
+]
 
 def get(identifier):
     if identifier == "mse":

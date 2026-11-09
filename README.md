@@ -3,131 +3,241 @@
 [![codecov](https://codecov.io/gh/sourcepirate/neutro/graph/badge.svg?token=8H4Q2Q2Q2Q)](https://codecov.io/gh/sourcepirate/neutro)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Neutro** is a intentionally naive, NumPy-only implementation of modern deep learning architectures. It’s the Keras experience you love, powered by the NumPy you tolerate, built specifically for people who want to peek under the hood and actually *understand* how the gears turn.
+**Neutro** is an intentionally naive, NumPy-only implementation of modern deep
+learning. It keeps the Keras API you know (`.compile()`, `.fit()`, `.predict()`)
+so you can spend your attention on the algorithms instead of the boilerplate.
+
+It is built for people who want to peek under the hood and understand how the
+gears turn. Every gradient, convolution, attention head, and optimizer update
+is Python you can read.
+
+---
+
+## 🚀 Start Here in 5 Minutes
+
+### 1. Install
+
+```bash
+git clone https://github.com/sourcepirate/neutro.git
+cd neutro
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -e ".[test]"
+```
+
+Neutro targets Python 3.10+. The core dependencies are `numpy`, `scipy`,
+`joblib`, `tqdm`, and `regex`; `pytest` is included with `.[test]`. A couple of
+plotting examples also use `matplotlib`.
+
+### 2. Run one model
+
+```bash
+python examples/00_hello_neutro.py
+```
+
+You should see a model summary and a loss that goes down:
+
+```text
+Loss after epoch 1: 1.0617
+Loss after epoch 5: 0.3720
+```
+
+That is the whole loop:
+
+```text
+forward pass -> loss -> backward pass -> optimizer step
+```
+
+### 3. Run the tests
+
+```bash
+pytest -q
+```
+
+### 4. Follow the guided path
+
+| Read | What you get |
+|------|--------------|
+| [Start Here](docs/START_HERE.md) | Install, first run, troubleshooting |
+| [Tutorial 01: Your first model](docs/tutorials/01-first-model.md) | Shapes, `Dense`, `fit`, and a real gradient |
+| [Tutorial 02: Gradients and the tape](docs/tutorials/02-gradients-and-the-tape.md) | How one training step works |
+| [Tutorial 03: Attention from scratch](docs/tutorials/03-attention-from-scratch.md) | Q/K/V, softmax, heads, causal masks |
+| [Tutorial 04: A tiny transformer LM](docs/tutorials/04-tiny-transformer-lm.md) | Training and generating with a causal transformer |
+| [Tutorial 05: Manual backprop](docs/tutorials/05-manual-backprop.md) | Chain rule by hand vs the tape |
+| [Tutorial 06: Tokenization](docs/tutorials/06-tokenization.md) | Bytes, BPE, special tokens, save/load |
+| [Tutorial 07: LoRA fine-tuning](docs/tutorials/07-lora-finetuning.md) | Freeze the base, train a low-rank update |
+| [Architecture map](docs/ARCHITECTURE.md) | Where everything lives |
+| [Glossary](docs/GLOSSARY.md) | Tensor, parameter, logits, head, MoE, LoRA, … |
+| [Implementation status](docs/IMPLEMENTATION_STATUS.md) | What is real, simplified, or an alias |
+
+The full documentation index is [docs/README.md](docs/README.md). To preview
+the documentation site locally:
+
+```bash
+pip install -e ".[docs]"
+mkdocs serve
+```
 
 ---
 
 ## 👴 The Philosophy: Why Does This Exist?
 
-Let's be honest: modern DL frameworks are black boxes. You pip install 4GB of binaries and suddenly you're "doing AI." 
+Modern DL frameworks are black boxes. You `pip install` 4 GB of binaries and
+suddenly you're "doing AI."
 
-**Neutro is for the curious, the learners, and the "old-school" folks like me** who believe that if you can't build it in a matrix, you don't really know it. 
+**Neutro is for the curious, the learners, and the "old-school" folks** who
+believe that if you can't build it in a matrix, you don't really know it.
 
-- **Learn, Don't just Run**: Every line of code is designed to be readable. We don't hide behind C++ kernels or CUDA kernels. If you want to know how FlashAttention *actually* tiles memory, you can just read the Python file.
-- **A Toy, not a Tool**: This isn't meant for production. It's a playground for learning advanced algorithms (MHA, GQA, FlashAttention, LSTM) in their purest form.
-- **For the Wisdom-Rich**: If you remember when 64MB of RAM was a flex and "vectorization" meant loop unrolling, this is for you. It's a fun way to play with cutting-edge 2024 algorithms using 1990s-era clarity.
-
-## 🔄 Autograd — From Scratch, In NumPy
-
-Unlike TensorFlow or JAX, `neutro` doesn't import a third-party autograd engine — **it is its own autograd engine**.
-
-We built `neutro.autograd` from scratch in pure NumPy: a `Tensor` wrapper with a `GradientTape` that records every operation and computes gradients via reverse-mode AD. Ops like `softmax`, `matmul`, and `relu` all register backward closures on the tape.
-
-### Two ways to learn backprop:
-
-1. **The Tape (default)**: Most layers use `base.Layer.backward()` which re-runs the forward pass inside a `GradientTape` and lets the tape compute all gradients automatically. This is clean, composable, and easy to maintain.
-
-2. **The Manual Way**: Any layer can override `backward(grad_output)` and compute gradients with explicit chain rule math. This is still supported and used by a few layers where the educational value of hand-writing the gradient is highest.
-
-Both paths teach you something. The tape shows you how autograd engines work internally (`docs/autograd/`). The manual path shows you the actual chain rule math for each layer.
+- **Learn, don't just run**: every line is meant to be readable. If you want to
+  know how attention tiles memory, or why AdamW decouples weight decay, you can
+  read the Python file.
+- **A toy, not a tool**: this is a playground for learning algorithms
+  (MHA, GQA, FlashAttention-shaped attention, LSTM, MoE, LoRA, diffusion), not
+  a production framework.
+- **For the wisdom-rich**: if you remember when 64 MB of RAM was a flex, this
+  is a fun way to play with modern algorithms using 1990s-era clarity.
 
 ---
 
-## 🚀 What's Inside?
+## 🔄 Two Ways to Understand Backprop
 
-- **"I can't believe it's not Keras!"**: Your muscle memory is safe here. `.compile()`, `.fit()`, `.predict()`—it’s all exactly where you left it.
-- **Pure NumPy Math**: We did the math so you don't have to. Every gradient, from Softmax to LSTM gates, is hand-derived and vectorized.
-- **Speed (for a CPU)**: We use `im2col` for convolutions and **FlashAttention** (yes, really) to keep your CPU fans humming in a way that sounds productive.
-- **Zero Heavy Dependencies**: Tired of downloading 4GB of CUDA binaries just to train on MNIST? We require exactly `numpy` and `scipy`. That’s it.
+Neutro is its own autograd engine. There are two paths, and the beginner path
+is the first one:
+
+1. **The tape (default).** Most layers write only `forward`. The base
+   `Layer.backward` re-runs that forward pass inside a `GradientTape` and asks
+   the tape for gradients. This keeps layer code short and composable.
+2. **Manual backprop (advanced).** A few layers (`BitLinear`, `LoRA`, `QLoRA`,
+   `UNet`, `VAE`, `MaskedDiffusionLM`) write `backward` by hand with explicit
+   chain-rule math. This is where the gradient mechanics are the lesson.
+
+Both paths are documented in [Implementation status](docs/IMPLEMENTATION_STATUS.md#backward-strategies).
+Start with the tape; visit manual backprop when you want to see the chain rule
+spelled out.
 
 ---
 
-## 🛠 Features That'll Make You Say "Wait, You Implemented That?"
+## 🛠 What's Inside
 
 | Category | The "Fancy" Stuff | Why You Should Care |
 | :--- | :--- | :--- |
-| **Attention** | `FlashAttention`, `MQA`, `GQA`, `RoPE` | We have more attention variants than a distracted toddler. |
-| **Tokenization** | `BPETokenizer`, `RegexTokenizer` | Byte-level BPE with regex splitting, just like the big kids. |
+| **Autograd** | `Tensor`, `GradientTape`, `Function` | A complete reverse-mode AD engine in NumPy. |
+| **Attention** | `MHA`, `MQA`, `GQA`, `MLA`, `FlashAttention` | More attention variants than a distracted toddler. `FlashAttention` is API-compatible but simplified — see [status](docs/IMPLEMENTATION_STATUS.md). |
+| **Tokenization** | `BPETokenizer`, `RegexTokenizer` | Byte-level BPE with regex splitting. |
 | **Vision** | `AlexNet`, `VGG16`, `VGG19`, `im2col` | Classical and modern vision architectures, vectorized. |
-| **LLMs** | `Llama`, `Qwen`, `DeepSeek` (MoE) | Yes, you can run a (very tiny) MoE model on your CPU. |
-| **Modern Ops** | `RMSNorm`, `SiLU`, `SwiGLU` | The secret sauce of modern LLMs, hand-implemented. |
-| **Optimizers** | `AdamW`, `Adam`, `SGD+Momentum` | Keep your weights from exploding like a bad science fair project. |
+| **LLMs** | `LlamaTiny`, `Qwen2Tiny`, `DeepSeekV2Tiny` (MoE) | Tiny models you can actually run on a CPU. |
+| **Modern Ops** | `RMSNorm`, `SiLU`, `SwiGLU`, `RoPE` | The secret sauce of modern LLMs, hand-implemented. |
+| **Optimizers** | `AdamW`, `Adam`, `SGD+Momentum` | Keep your weights from exploding like a bad science project. |
+| **Fine-tuning** | `LoRA`, `QLoRA` | Adapt a model without training every parameter. |
 
 ---
 
-## 🏆 The Hall of Fame: Pre-built Architectures
-
-Why build from scratch when we've already done the heavy lifting?
-
-- **The Visionaries**: `AlexNet`, `VGG16`, `VGG19`
-- **The Linguists**: `GPT-2`, `LlamaTiny`, `QwenTiny`, `DeepSeekTiny` (Mixture of Experts)
-
----
-
-## 💻 Show Me The Code!
-
-If you know Keras, you already know Neutro. It's that simple.
+## 💻 The Keras You Know
 
 ```python
 from neutro.models import Sequential
-from neutro.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from neutro.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, ReLU, Softmax
+from neutro.optimizers import Adam
 
-# Build a CNN that actually fits in your head
 model = Sequential([
-    Conv2D(32, kernel_size=3, activation='relu', input_shape=(28, 28, 1)),
+    Conv2D(32, kernel_size=3, input_shape=(28, 28, 1)),
+    ReLU(),
     MaxPooling2D(pool_size=2),
     Flatten(),
-    Dense(128, activation='relu'),
+    Dense(128, activation="relu"),
     Dropout(0.5),
-    Dense(10, activation='softmax')
+    Dense(10),
+    Softmax(),
 ])
 
-# Compile it like it's 2015
-model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+model.compile(
+    optimizer=Adam(learning_rate=0.001),   # or optimizer="adam"
+    loss="categorical_crossentropy",
+    metrics=["accuracy"],
+)
 
-# Fit it like a tailored suit
-model.fit(train_flow, epochs=10)
+# train_x: (N, 28, 28, 1) float images
+# train_y: (N, 10) one-hot labels
+model.fit(train_x, train_y, epochs=10, batch_size=32)
 ```
+
+`compile` accepts both Keras-style names (`"adam"`, `"sgd"`, `"adamw"`) and
+optimizer instances.
 
 ---
 
 ## 📚 Documentation
 
-Every component is documented with line-by-line walkthroughs, math, and references to the original research papers.
+Start with [Start Here](docs/START_HERE.md), then follow the guided path above.
+The full index, with research-paper links, is [docs/README.md](docs/README.md).
 
-👉 **[Browse the full documentation →](./docs/README.md)**
+Deep dives:
 
----
-
-## 🧠 Deep Dives & Nerdy Stuff
-
-We documented everything because we know you like to check the math:
-
-- [**Documentation Home**](./docs/README.md) — Start here for the full index with research paper links.
-- [**Attention Mechanisms**](./docs/layers/attention/) — How we made FlashAttention work on a CPU.
-- [**Convolutional Magic**](./docs/layers/convolutional/) — The `im2col` deep dive.
-- [**Activations & Gradients**](./docs/activations/) — Proofs for the brave.
-- [**Autograd Engine**](./docs/autograd/) — How we do automatic differentiation.
-- [**Optimizers**](./docs/optimizers/) — Why AdamW is better than your ex.
+- [Attention mechanisms](docs/layers/attention/mha.md) — MHA, GQA, MQA, MLA, KV cache
+- [Convolutional magic](docs/layers/convolutional/conv2d.md) — the `im2col` deep dive
+- [Autograd engine](docs/autograd/autograd.md) — `Tensor`, `GradientTape`, `Function`
+- [Optimizers](docs/optimizers/optimizers.md) — SGD, Adam, AdamW, schedules
+- [Layer lifecycle](docs/layers/base.md) — `build`, `forward`, `backward`
 
 ---
 
-## 🧪 Examples to Flex Your CPU
+## 🧪 Examples
 
-Check out the `examples/` folder for end-to-end scripts:
-- `mnist_cnn.py`: Standard digit classification with real-time augmentation.
-- `wikitext_llm.py`: A character-level Transformer that actually talks back.
+`examples/00_hello_neutro.py` is the first stop. The rest are ordered by
+difficulty in [examples/README.md](examples/README.md):
+
+- `mnist_cnn.py` — standard digit classification with a small subset.
+- `mnist_functional_residual.py` — Functional API and skip connections.
+- `sentiment_gru.py` — embeddings, GRU, padded sequences.
+- `reasoning_train.py` — a tiny causal transformer on arithmetic.
+- `wikitext_llm.py` — a character-level transformer language model.
+- `lora_finetune.py`, `qlora_finetune.py`, `bitnet_train.py` — modern fine-tuning.
+- `qwen_moe_toy.py`, `tinystories_diffusion.py`, `mnist_vae.py`, `mnist_diffusion.py` — research toys.
+
+Dataset examples cache downloads in `~/.neutro/datasets`.
 
 ---
 
-## 🏗 Installation
+## 🏗 Installation Options
+
+From a clone (recommended for reading and editing):
 
 ```bash
-git clone https://github.com/sourcepirate/neutro.git
-cd neutro
-pip install -e .
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[test]"
+```
+
+From `requirements.txt`:
+
+```bash
+pip install -r requirements.txt
 ```
 
 ---
 
-**Disclaimer**: This is a hobby project for learning and exploration. It is intentionally naive, likely inefficient compared to compiled kernels, and 100% focused on the joy of understanding advanced algorithms. If you're looking to change the world with AGI, go to PyTorch. If you're looking to understand why your Transformer works while drinking a nice cup of tea, you're in the right place.
+## 🧭 Status and Scope
+
+Neutro is educational software. It is intentionally naive, likely slow compared
+to compiled kernels, and not intended for production. Some components are
+simplified or API-compatible aliases; see
+[Implementation status](docs/IMPLEMENTATION_STATUS.md) before assuming a name
+means the full published algorithm.
+
+If you're looking to change the world with AGI, go to PyTorch. If you're looking
+to understand why your Transformer works while drinking a nice cup of tea,
+you're in the right place.
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome, especially documentation and small, focused
+examples. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the setup, test command,
+and the "add a layer" checklist.
+
+---
+
+## 📄 License
+
+MIT. See [LICENSE](LICENSE).

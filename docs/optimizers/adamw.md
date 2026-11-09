@@ -5,10 +5,10 @@ AdamW is a variation of the Adam optimizer that decouples weight decay from the 
 
 ## Mathematical Formulation
 In standard Adam with L2 regularization, the weight decay is added to the gradient. In AdamW, the weight decay is applied directly to the weights:
-1.  **Gradient**: $g_t = \nabla f(w_t)$
-2.  **Momentum**: $m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t$
-3.  **Velocity**: $v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t^2$
-4.  **Update**: $w_{t+1} = w_t - \alpha \left( \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon} + \lambda w_t \right)$
+1. **Gradient**: $g_t = \nabla f(w_t)$
+2. **Momentum**: $m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t$
+3. **Velocity**: $v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t^2$
+4. **Update**: $w_{t+1} = w_t - \alpha \left( \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon} + \lambda w_t \right)$
 where $\lambda$ is the weight decay coefficient.
 
 ## Implementation Details

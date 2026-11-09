@@ -5,6 +5,9 @@ from .precision import Precision
 from .recall import Recall
 from .f1_score import F1Score
 
+__all__ = ["Metric", "Accuracy", "SparseAccuracy", "Precision", "Recall",
+           "F1Score", "get"]
+
 def get(identifier):
     if identifier == "accuracy":
         return Accuracy()

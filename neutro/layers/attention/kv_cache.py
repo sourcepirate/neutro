@@ -13,19 +13,38 @@ class KVCache:
         self.v_cache = {} # layer_id -> v_tensor
 
     def update(self, k, v, layer_id):
-        """
-        Updates the cache with new K and V, and returns the full history.
-        k, v: (batch, num_heads, 1, head_dim) - usually just one token during generation
+        """Update the cache with new K/V and return the full history.
+
+        Args:
+            k, v: tensors of shape ``(B, H, new_tokens, d)``. During
+                generation ``new_tokens`` is usually 1.
+            layer_id: identifies which attention layer owns this cache.
+
+        Returns:
+            ``(k_full, v_full)`` with all cached tokens along axis 2.
+
+        The concatenation goes through ``autograd_ops.concatenate`` when the
+        inputs are ``Tensor`` objects, so the tape is not silently broken by a
+        NumPy conversion. During ordinary inference the cache holds plain
+        arrays or tensors with no active tape.
         """
         if layer_id not in self.k_cache:
             self.k_cache[layer_id] = k
             self.v_cache[layer_id] = v
         else:
-            # Concatenate along the sequence dimension (axis 2)
-            self.k_cache[layer_id] = np.concatenate([self.k_cache[layer_id], k], axis=2)
-            self.v_cache[layer_id] = np.concatenate([self.v_cache[layer_id], v], axis=2)
-            
+            self.k_cache[layer_id] = self._concat(self.k_cache[layer_id], k)
+            self.v_cache[layer_id] = self._concat(self.v_cache[layer_id], v)
+
         return self.k_cache[layer_id], self.v_cache[layer_id]
+
+    @staticmethod
+    def _concat(previous, new):
+        """Concatenate along the sequence axis without dropping autograd."""
+        from neutro.autograd import Tensor, ops as autograd_ops
+
+        if isinstance(previous, Tensor) or isinstance(new, Tensor):
+            return autograd_ops.concatenate([previous, new], axis=2)
+        return np.concatenate([previous, new], axis=2)
 
     def reset(self):
         self.k_cache = {}

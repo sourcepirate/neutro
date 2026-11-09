@@ -1,5 +1,11 @@
 # Batch Normalization
 
+> **Implementation note:** The current layer relies on the tape-backed
+> `Layer.backward`; it does not define `backward`. The manual code below is
+> illustrative; the forward math and shapes still apply. See
+> [Layer base class](../base.md#backward-the-tape-backed-fallback).
+
+
 ## What does this layer do?
 
 Batch Normalization stabilizes training by normalizing activations **across the batch dimension** instead of across features. For each feature channel, it computes the mean and variance over the entire batch, then normalizes and applies a learned scale (`gamma`) and shift (`beta`).

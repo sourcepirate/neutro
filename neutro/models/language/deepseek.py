@@ -25,7 +25,8 @@ class DeepSeekMoEBlock(Layer):
         self.attention_norm = RMSNorm()
         self.ffn_norm = RMSNorm()
 
-        self.moe = MoELayer(num_experts=n_experts, top_k=top_k, expert_units=dim*2)
+        self.moe = MoELayer(num_experts=n_experts, top_k=top_k, expert_units=dim*2,
+                            expert_type='swiglu', expert_hidden_dim=dim*2)
         self.shared_expert = Dense(dim)
 
     def build(self, input_shape):
@@ -90,10 +91,7 @@ def DeepSeekV3Tiny(vocab_size, seq_len, dim=512, n_layers=2, n_heads=8):
     return model
 
 def DeepSeekV4Tiny(vocab_size, seq_len, dim=512, n_layers=2, n_heads=8):
-    """
-    DeepSeek V4 (Speculative):
-    Pushing the limits of MoE and MLA.
-    """
+    """Alias for a deeper ``DeepSeekV3Tiny``; not a released architecture."""
     return DeepSeekV3Tiny(vocab_size, seq_len, dim, n_layers + 1, n_heads)
 
 def DeepSeekTiny(vocab_size, seq_len, dim=512, n_layers=2, n_heads=8):

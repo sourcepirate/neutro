@@ -1,5 +1,12 @@
 # Pooling Layers
 
+> **Implementation note:** the pooling layers delegate gradients to
+> `MaxPool2DFunction` and the other custom ops in
+> `neutro/autograd/custom_ops.py`; the layers do not define `backward`. The
+> manual code below is illustrative; the forward math and shapes still apply.
+> See [Layer base class](../base.md).
+
+
 ## MaxPooling2D
 
 ### What does this layer do?
@@ -29,11 +36,11 @@ def __init__(self, pool_size=(2, 2), strides=None, data_format='channels_last', 
     self.data_format = data_format
 ```
 
-🔍 **Line 3-4**: If `pool_size` is an int like `2`, expand it to `(2, 2)`. Same for `strides`.
+🔍 If `pool_size` is an int like `2`, expand it to `(2, 2)`. Same for `strides`.
 
-🔍 **Line 5**: If `strides` is `None`, default to `pool_size` — the usual "non-overlapping windows" behavior.
+🔍 If `strides` is `None`, default to `pool_size` — the usual "non-overlapping windows" behavior.
 
-🔍 **Lines 7-8**: `data_format` tells us whether channels are last (NHWC — TensorFlow convention) or first (NCHW — PyTorch convention). The layer normalizes everything to `channels_last` internally for simpler indexing: `(batch, h, w, c)`.
+🔍 `data_format` tells us whether channels are last (NHWC — TensorFlow convention) or first (NCHW — PyTorch convention). The layer normalizes everything to `channels_last` internally for simpler indexing: `(batch, h, w, c)`.
 
 #### `forward` — finding the max
 
@@ -58,31 +65,31 @@ def forward(self, inputs, training=False):
     return self._from_channels_last(out)
 ```
 
-🔍 **Line 3**: Cache the original input for backward pass. We'll need it for shape information.
+🔍 Cache the original input for backward pass. We'll need it for shape information.
 
-🔍 **Line 4**: Normalize to `(batch, h, w, c)` if in `channels_first` format.
+🔍 Normalize to `(batch, h, w, c)` if in `channels_first` format.
 
 📐 **Shape so far**: `inputs_nhwc` is `(B, H, W, C)`.
 
-🔍 **Lines 8-9**: Compute output spatial dimensions. For `H=28, ph=2, sh=2`: `(28-2)//2 + 1 = 14`.
+🔍 Compute output spatial dimensions. For `H=28, ph=2, sh=2`: `(28-2)//2 + 1 = 14`.
 
-🔍 **Line 10**: Transpose to `(B, C, H, W)` then reshape to `(B*C, 1, H, W)`. This merges batch and channel dimensions so `im2col_indices` treats each channel of each sample independently.
+🔍 Transpose to `(B, C, H, W)` then reshape to `(B*C, 1, H, W)`. This merges batch and channel dimensions so `im2col_indices` treats each channel of each sample independently.
 
 📐 **Shape**: `(B, H, W, C)` → `.transpose(0, 3, 1, 2)` → `(B, C, H, W)` → `.reshape(-1, 1, H, W)` → `(B*C, 1, H, W)`.
 
-🔍 **Line 12**: `im2col_indices` "unrolls" each window into a column. For a 2×2 window, each column has 4 elements (one per window position). The result has shape:
+🔍 `im2col_indices` "unrolls" each window into a column. For a 2×2 window, each column has 4 elements (one per window position). The result has shape:
 
 📐 **Shape of `self.x_cols`**: `(ph * pw * in_channels, oh * ow * batch)` = `(4, oh * ow * B)` for a 2×2 pool with 1 channel per grouped sample. Each column is one window; each row is one position *within* that window.
 
-🔍 **Line 13**: `np.argmax(self.x_cols, axis=0)` — for each column (window), find which row (position within the window) has the maximum value.
+🔍 `np.argmax(self.x_cols, axis=0)` — for each column (window), find which row (position within the window) has the maximum value.
 
 📐 **Shape of `self.arg_max`**: `(oh * ow * B*C,)` — one index per window. This is cached for backward: it tells us *exactly which element* in each window was the winner.
 
-🔍 **Line 14**: Select the max value from each column using fancy indexing. `self.arg_max` gives the row index, `np.arange(self.arg_max.size)` gives the column index.
+🔍 Select the max value from each column using fancy indexing. `self.arg_max` gives the row index, `np.arange(self.arg_max.size)` gives the column index.
 
 📐 **Shape**: `self.x_cols[self.arg_max, np.arange(self.arg_max.size)]` → `(oh * ow * B * C,)` — one scalar per window.
 
-🔍 **Lines 16-17**: Unflatten back: `(oh * ow * B * C,)` → `(oh, ow, B, C)` → `.transpose(2, 0, 1, 3)` → `(B, oh, ow, C)`. Then convert back to original data format if needed.
+🔍 Unflatten back: `(oh * ow * B * C,)` → `(oh, ow, B, C)` → `.transpose(2, 0, 1, 3)` → `(B, oh, ow, C)`. Then convert back to original data format if needed.
 
 #### `backward` — routing gradients to the winner
 
@@ -103,23 +110,23 @@ def backward(self, grad_output):
     return self._from_channels_last(dx.reshape(batch, c, h, w).transpose(0, 2, 3, 1))
 ```
 
-🔍 **Line 2-3**: Normalize gradient to NHWC and pull out shapes.
+🔍 Normalize gradient to NHWC and pull out shapes.
 
-🔍 **Line 6**: Get the original input's spatial dimensions `(H, W)` from the cached `self.inputs`.
+🔍 Get the original input's spatial dimensions `(H, W)` from the cached `self.inputs`.
 
-🔍 **Line 8**: Flatten the gradient to match the column layout from forward.
+🔍 Flatten the gradient to match the column layout from forward.
 
 📐 **Shape**: `grad_output` `(B, oh, ow, C)` → `.transpose(1, 2, 0, 3)` → `(oh, ow, B, C)` → `.flatten()` → `(oh * ow * B * C,)`.
 
-🔍 **Lines 10-11**: The key insight: **only the max position gets the gradient**. Create a zero gradient buffer the same shape as `self.x_cols` (`(4, oh * ow * B * C)` for 2×2 pool). Then, for each window (column), place the output gradient at exactly the row index that was the argmax in forward. All other positions within that window get 0.
+🔍 The key insight: **only the max position gets the gradient**. Create a zero gradient buffer the same shape as `self.x_cols` (`(4, oh * ow * B * C)` for 2×2 pool). Then, for each window (column), place the output gradient at exactly the row index that was the argmax in forward. All other positions within that window get 0.
 
 🔍 **Why this works**: If element `(0, 0)` was the max in a 2×2 window, `self.arg_max` for that window is `0`. The gradient for position `(0, 0)` equals the output gradient; positions `(0, 1)`, `(1, 0)`, `(1, 1)` in that window get 0. Small changes to non-max positions don't affect the output, so they get no gradient.
 
 📐 **`dx_cols[argmax, col_indices] = dout`**: `dx_cols` has shape `(win_size, n_windows)`. `self.arg_max` has shape `(n_windows,)`. For each window `j`, we set `dx_cols[arg_max[j], j] = dout[j]`.
 
-🔍 **Line 13**: `col2im_indices` is the inverse of `im2col_indices` — it scatters the columns back onto the original `(B*C, 1, H, W)` grid. `np.add.at` is used internally to handle overlapping windows (though with stride == pool_size, there are no overlaps).
+🔍 `col2im_indices` is the inverse of `im2col_indices` — it scatters the columns back onto the original `(B*C, 1, H, W)` grid. `np.add.at` is used internally to handle overlapping windows (though with stride == pool_size, there are no overlaps).
 
-🔍 **Line 14**: Reshape from `(B*C, 1, H, W)` back to `(B, C, H, W)` then transpose to `(B, H, W, C)`, and finally convert to original data format.
+🔍 Reshape from `(B*C, 1, H, W)` back to `(B, C, H, W)` then transpose to `(B, H, W, C)`, and finally convert to original data format.
 
 ---
 
@@ -147,13 +154,13 @@ def forward(self, inputs, training=False):
     return np.mean(inputs, axis=(1, 2))
 ```
 
-🔍 **Line 2**: Cache the full input shape. We'll need `H` and `W` in backward to divide the gradient.
+🔍 Cache the full input shape. We'll need `H` and `W` in backward to divide the gradient.
 
-🔍 **Lines 3-4**: `np.mean(inputs, axis=(2, 3))` — average over height and width (axes 2 and 3) for `channels_first`.
+🔍 `np.mean(inputs, axis=(2, 3))` — average over height and width (axes 2 and 3) for `channels_first`.
 
 📐 **Shape**: `(B, C, H, W)` → `np.mean(axis=(2,3))` → `(B, C)`. Each feature map becomes one number.
 
-🔍 **Line 5**: For `channels_last`, spatial dimensions are axes 1 and 2.
+🔍 For `channels_last`, spatial dimensions are axes 1 and 2.
 
 📐 **Shape**: `(B, H, W, C)` → `np.mean(axis=(1,2))` → `(B, C)`.
 
@@ -168,9 +175,9 @@ def backward(self, grad_output):
     return (grad_output[:, None, None, :] * np.ones((batch, h, w, c))) / (h * w)
 ```
 
-🔍 **Line 3 or 6**: Unpack the cached input shape to get `H` and `W`.
+🔍 Unpack the cached input shape to get `H` and `W`.
 
-🔍 **Lines 4 or 7**: The gradient of an average is the upstream gradient **divided evenly** across all H×W positions. The upstream gradient `grad_output` has shape `(B, C)`. We need to broadcast it back to `(B, H, W, C)` — each of the H×W spatial positions gets the same gradient value, scaled by `1/(H*W)`.
+🔍 The gradient of an average is the upstream gradient **divided evenly** across all H×W positions. The upstream gradient `grad_output` has shape `(B, C)`. We need to broadcast it back to `(B, H, W, C)` — each of the H×W spatial positions gets the same gradient value, scaled by `1/(H*W)`.
 
 📐 **Shape walkthrough** (channels_last case): `grad_output` `(B, C)` → `grad_output[:, None, None, :]` → `(B, 1, 1, C)` → `* np.ones((B, H, W, C))` → `(B, H, W, C)` → `/(H*W)` → `(B, H, W, C)` — matching the original input shape.
 
@@ -203,15 +210,15 @@ def forward(self, inputs, training=False):
     return np.max(inputs_nhwc, axis=(1, 2))
 ```
 
-🔍 **Line 2**: Cache input for backward.
+🔍 Cache input for backward.
 
-🔍 **Lines 3-5**: Normalize to NHWC for consistent indexing.
+🔍 Normalize to NHWC for consistent indexing.
 
-🔍 **Line 6**: Flatten spatial dimensions and find the argmax per channel.
+🔍 Flatten spatial dimensions and find the argmax per channel.
 
 📐 **Shape**: `inputs_nhwc` is `(B, H, W, C)`. `.reshape(B, -1, C)` → `(B, H*W, C)`. `np.argmax(axis=1)` → `(B, C)`. Each element `max_indices[b, c]` is the flat spatial index (0 to H*W-1) of the maximum value in channel `c`.
 
-🔍 **Line 7**: `np.max(inputs_nhwc, axis=(1, 2))` — take the max over both spatial dimensions.
+🔍 `np.max(inputs_nhwc, axis=(1, 2))` — take the max over both spatial dimensions.
 
 📐 **Shape**: `(B, H, W, C)` → `np.max(axis=(1,2))` → `(B, C)`.
 
@@ -235,9 +242,9 @@ def backward(self, grad_output):
     return dx_nhwc
 ```
 
-🔍 **Lines 3-6**: Create a zero gradient buffer the same shape as the input. The gradient starts as all zeros — only the max positions will get filled in.
+🔍 Create a zero gradient buffer the same shape as the input. The gradient starts as all zeros — only the max positions will get filled in.
 
-🔍 **Lines 7-10**: For each sample and each channel, find which spatial position `(ih, iw)` was the maximum. `divmod(idx, w)` converts the flat index back to 2D coordinates. Then place `grad_output[b, channel]` at exactly that position.
+🔍 For each sample and each channel, find which spatial position `(ih, iw)` was the maximum. `divmod(idx, w)` converts the flat index back to 2D coordinates. Then place `grad_output[b, channel]` at exactly that position.
 
 🔍 **Why no gradient elsewhere**: Same logic as MaxPooling2D — changing a non-maximum pixel doesn't change the output, so its gradient is zero.
 
@@ -267,9 +274,9 @@ def forward(self, inputs, training=False):
     return np.repeat(np.repeat(inputs, self.size[0], axis=1), self.size[1], axis=2)
 ```
 
-🔍 **Line 2**: Cache the input shape. We'll need `H`, `W` and `C` in backward to know how to un-reshape the gradient.
+🔍 Cache the input shape. We'll need `H`, `W` and `C` in backward to know how to un-reshape the gradient.
 
-🔍 **Line 3**: `np.repeat` on axis=1 (height) repeats each row `size[0]` times, then `np.repeat` on axis=2 (width) repeats each column `size[1]` times.
+🔍 `np.repeat` on axis=1 (height) repeats each row `size[0]` times, then `np.repeat` on axis=2 (width) repeats each column `size[1]` times.
 
 📐 **Shape walkthrough**: Input `(B, H, W, C)`. First repeat: `np.repeat(inputs, sh, axis=1)` → `(B, H*sh, W, C)`. Second repeat: `np.repeat(..., sw, axis=2)` → `(B, H*sh, W*sw, C)`.
 
@@ -286,13 +293,13 @@ def backward(self, grad_output):
     return grad.sum(axis=(2, 4))
 ```
 
-🔍 **Line 2**: Get the original input dimensions from the cache.
+🔍 Get the original input dimensions from the cache.
 
-🔍 **Line 5**: Reshape the gradient so that the repeated dimensions are separate axes.
+🔍 Reshape the gradient so that the repeated dimensions are separate axes.
 
 📐 **Shape**: `grad_output` is `(B, H*sh, W*sw, C)`. Reshape to `(B, H, sh, W, sw, C)`. Now each original pixel's `sh × sw` block is on axes 2 and 4.
 
-🔍 **Line 6**: Sum over the repeated axes (2 and 4). Since forward repeated the same value across the block, backward sums all those gradients back into a single value.
+🔍 Sum over the repeated axes (2 and 4). Since forward repeated the same value across the block, backward sums all those gradients back into a single value.
 
 📐 **Shape**: `(B, H, sh, W, sw, C)` → `.sum(axis=(2,4))` → `(B, H, W, C)` — matching the original input shape.
 
@@ -308,22 +315,22 @@ import numpy as np
 pool = MaxPooling2D(pool_size=(2, 2))
 x = np.random.randn(2, 28, 28, 16)
 y = pool(x)
-print(f"MaxPool: {x.shape} → {y.shape}")         # (2, 28, 28, 16) → (2, 14, 14, 16)
+print(f"MaxPool: {x.shape} → {y.shape}") # (2, 28, 28, 16) → (2, 14, 14, 16)
 
 # Global pooling: spatial dims → scalar per channel
 gap = GlobalAveragePooling2D()
 z = gap(y)
-print(f"GlobalAvgPool: {y.shape} → {z.shape}")   # (2, 14, 14, 16) → (2, 16)
+print(f"GlobalAvgPool: {y.shape} → {z.shape}") # (2, 14, 14, 16) → (2, 16)
 
 gmp = GlobalMaxPooling2D()
 z2 = gmp(y)
-print(f"GlobalMaxPool: {y.shape} → {z2.shape}")  # (2, 14, 14, 16) → (2, 16)
+print(f"GlobalMaxPool: {y.shape} → {z2.shape}") # (2, 14, 14, 16) → (2, 16)
 
 # UpSampling2D: nearest neighbor upsample
 up = UpSampling2D(size=(2, 2))
 x_small = np.random.randn(2, 14, 14, 8)
 y_big = up(x_small)
-print(f"UpSample: {x_small.shape} → {y_big.shape}")  # (2, 14, 14, 8) → (2, 28, 28, 8)
+print(f"UpSample: {x_small.shape} → {y_big.shape}") # (2, 14, 14, 8) → (2, 28, 28, 8)
 ```
 
 ## References

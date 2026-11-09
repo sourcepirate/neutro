@@ -20,6 +20,11 @@ def test_transformer_block_pre_norm():
     grad = layer.backward(np.random.rand(2, 5, 16))
     assert grad.shape == (2, 5, 16)
 
+def test_transformer_block_attention_alias():
+    layer = TransformerBlock(embed_dim=16, num_heads=2, ff_dim=32)
+    assert layer.attention is layer.att
+
+
 def test_transformer_block_flash():
     layer = TransformerBlock(embed_dim=16, num_heads=2, ff_dim=32, use_flash=True)
     layer.build((2, 5, 16))

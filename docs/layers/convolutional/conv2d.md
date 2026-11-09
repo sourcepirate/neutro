@@ -1,5 +1,11 @@
 # Conv2D
 
+> **Implementation note:** `Conv2D` delegates its gradient to
+> `Conv2DFunction` in `neutro/autograd/custom_ops.py`; the layer itself does
+> not define `backward`. The manual code below is illustrative; the forward
+> math and shapes still apply. See [Layer base class](../base.md).
+
+
 ## What does this layer do?
 
 Conv2D slides a 2D filter bank across an image (or any 2D grid), detecting spatial patterns like edges, textures, and shapes. Each filter learns to respond when a particular visual pattern appears in its receptive field.
@@ -52,8 +58,8 @@ Three helper methods normalize everything to `channels_last` internally:
 
 ```python
 _shape_to_channels_last(shape)
-_to_channels_last(inputs)     # convert input to NHWC
-_from_channels_last(outputs)  # convert output back to original format
+_to_channels_last(inputs) # convert input to NHWC
+_from_channels_last(outputs) # convert output back to original format
 ```
 
 This keeps the core convolution logic (and im2col) in one format while exposing the user's preferred convention at the API boundary.
@@ -79,9 +85,9 @@ def __init__(self, filters, kernel_size, strides=(1, 1), padding='valid', activa
     self.data_format = data_format
 ```
 
-🔍 **Line `kernel_size`**: If the user passes an integer (e.g., `kernel_size=3`), we normalize to `(3, 3)`. Same for `strides`. This means the rest of the code can always unpack two values without checking types.
+🔍 If the user passes an integer (e.g., `kernel_size=3`), we normalize to `(3, 3)`. Same for `strides`. This means the rest of the code can always unpack two values without checking types.
 
-🔍 **Line `data_format`**: Keras-style `data_format` argument. The validation check at line 30 catches typos early rather than producing mysterious shape errors later.
+🔍 Keras-style `data_format` argument. The validation check at catches typos early rather than producing mysterious shape errors later.
 
 ### Step 2: `build`
 

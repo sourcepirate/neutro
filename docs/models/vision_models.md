@@ -12,20 +12,20 @@ The UNet is a **subclassed model** with a custom forward that takes `[x, t]` (im
 ```python
 def forward(self, inputs, training=False):
     x, t = inputs
-    h1 = self.enc1(x, training)           # (B, H, W, base_filters)
-    p1 = self.pool1(h1)                   # (B, H/2, W/2, base_filters)
-    h2 = self.enc2(p1, training)          # (B, H/2, W/2, base_filters*2)
-    p2 = self.pool2(h2)                   # (B, H/4, W/4, base_filters*2)
-    b = self.bottleneck(p2, training)     # (B, H/4, W/4, base_filters*4)
+    h1 = self.enc1(x, training) # (B, H, W, base_filters)
+    p1 = self.pool1(h1) # (B, H/2, W/2, base_filters)
+    h2 = self.enc2(p1, training) # (B, H/2, W/2, base_filters*2)
+    p2 = self.pool2(h2) # (B, H/4, W/4, base_filters*2)
+    b = self.bottleneck(p2, training) # (B, H/4, W/4, base_filters*4)
 
-    u1 = self.up1(b)                      # (B, H/2, W/2, base_filters*4)
-    c1 = self.concat1([u1, h2])           # Skip connection
-    d1 = self.dec1(c1, training)          # (B, H/2, W/2, base_filters*2)
+    u1 = self.up1(b) # (B, H/2, W/2, base_filters*4)
+    c1 = self.concat1([u1, h2]) # Skip connection
+    d1 = self.dec1(c1, training) # (B, H/2, W/2, base_filters*2)
 
-    u2 = self.up2(d1)                     # (B, H, W, base_filters*2)
-    c2 = self.concat2([u2, h1])           # Skip connection
-    d2 = self.dec2(c2, training)          # (B, H, W, base_filters)
-    return self.final_conv(d2, training)  # (B, H, W, input_channels)
+    u2 = self.up2(d1) # (B, H, W, base_filters*2)
+    c2 = self.concat2([u2, h1]) # Skip connection
+    d2 = self.dec2(c2, training) # (B, H, W, base_filters)
+    return self.final_conv(d2, training) # (B, H, W, input_channels)
 ```
 
 The backward pass manually routes gradients through the skip connections and concatenation splits.

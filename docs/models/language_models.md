@@ -1,17 +1,26 @@
 # Language Models
 
+> **Educational variants, not checkpoints.** These factories build small models
+> with the named architectural ideas. They are not the released GPT/Llama/Qwen/
+> DeepSeek weights. `Qwen3Tiny` and `DeepSeekV4Tiny` are **aliases** for deeper
+> variants of the previous version. See
+> [Implementation status](../IMPLEMENTATION_STATUS.md#language-models).
+
 ## GPT — `neutro/models/language/gpt.py`
 
-### GPT-1 (line 5)
+`GPT1Tiny` and `GPT2Tiny` are aliases for `GPT1` and `GPT2`, matching the
+naming of the other tiny language factories.
+
+### GPT-1
 
 $$P(w_t | w_{<t}) = \text{Softmax}(W \cdot h_t)$$
 
 - **Embedding**: Learned token embeddings (`Embedding(vocab_size, dim)`).
-- **Position**: Uses learned positional embeddings (not shown, simplified in `neutro`).
+- **Position**: This simplified version does **not** add positional embeddings. A real GPT-1 would add learned positions; see `TokenPositionEmbedding` if you want to experiment.
 - **Blocks**: `TransformerBlock` with Post-Norm (original GPT-1 style), causal masking.
 - **Output**: Dense projection to vocabulary, Softmax.
 
-### GPT-2 (line 24)
+### GPT-2
 
 Same structure but moves to **Pre-Norm** (LayerNorm before each sub-layer, not after), which improves training stability:
 
@@ -34,7 +43,7 @@ GPT-2 also adds a final LayerNorm before the output projection.
 3. **RoPE** (Rotary Position Embedding) instead of learned positional embeddings.
 4. **Pre-Norm** architecture.
 
-### `LlamaBlock` — line 59
+### `LlamaBlock`
 
 ```python
 class LlamaBlock(Layer):
@@ -45,20 +54,20 @@ class LlamaBlock(Layer):
         self.feed_forward = LlamaMLP(dim, hidden_dim)
 ```
 
-### `LlamaMLP` — line 12
+### `LlamaMLP`
 
 The SwiGLU MLP: three weight matrices $W_1, W_2, W_3$ instead of the standard two:
 
 ```python
 def forward(self, x):
-    gate = self.w1(x)           # Project up
-    gate = self.silu(gate)      # Activate with SiLU
-    value = self.w3(x)          # Another projection
-    multiplied = gate * value   # Element-wise gating
-    return self.w2(multiplied)  # Project back down
+    gate = self.w1(x) # Project up
+    gate = self.silu(gate) # Activate with SiLU
+    value = self.w3(x) # Another projection
+    multiplied = gate * value # Element-wise gating
+    return self.w2(multiplied) # Project back down
 ```
 
-### `LlamaTiny` — line 103
+### `LlamaTiny`
 
 A minimal Llama for educational purposes:
 
@@ -79,8 +88,9 @@ model.add(Dense(vocab_size))
 | `DeepSeekV1Tiny` | MHA (FlashAttention) | MoE (8 experts, top-2) | Strong baseline |
 | `DeepSeekV2Tiny` | **MLA** (Multi-Head Latent Attention) | MoE (8 experts, top-2) | KV cache reduction |
 | `DeepSeekV3Tiny` | MLA | MoE (16 experts, top-4) | More experts, refined routing |
+| `DeepSeekV4Tiny` | MLA | MoE (16 experts, top-4) | **Alias**: `DeepSeekV3Tiny` with one extra layer |
 
-### `DeepSeekMoEBlock` — line 11
+### `DeepSeekMoEBlock`
 
 Each block contains:
 - **Attention**: Either standard `FlashAttention` or `MultiHeadLatentAttention` (MLA).
@@ -99,7 +109,14 @@ def forward(self, x):
 
 ## Qwen — `neutro/models/language/qwen.py`
 
-Qwen models follow a similar architecture to Llama (RMSNorm, RoPE, SwiGLU) with specific configuration defaults for the Qwen series.
+Qwen models follow a similar architecture to Llama (RMSNorm, RoPE, SwiGLU) with
+specific configuration defaults for the Qwen series.
+
+- `Qwen1Tiny`, `Qwen2Tiny`, and `QwenTiny` are educational variants.
+- `Qwen3Tiny` is an **alias** for `Qwen2Tiny` with two extra layers; it is not
+  the real Qwen3 architecture.
+- `Qwen3MoETiny` is a Qwen-style block with an MoE feed-forward and shared
+  expert.
 
 ## Usage Example
 
@@ -109,7 +126,7 @@ import numpy as np
 
 llama = LlamaTiny(vocab_size=32000, seq_len=128, dim=512, n_layers=4, n_heads=8)
 tokens = np.array([[1, 5, 23, 42]])
-logits = llama(tokens)  # (1, 4, 32000)
+logits = llama(tokens) # (1, 4, 32000)
 
 gpt = GPT2(vocab_size=50000, seq_len=64)
 logits = gpt(tokens)

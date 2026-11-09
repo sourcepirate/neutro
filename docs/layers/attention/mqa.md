@@ -1,5 +1,11 @@
 # Multi-Query Attention (MQA)
 
+> **Implementation note:** The current layer relies on the tape-backed
+> `Layer.backward`; it does not define `backward`. The manual code below is
+> illustrative; the forward math and shapes still apply. See
+> [Layer base class](../base.md#backward-the-tape-backed-fallback).
+
+
 ## What does this layer do?
 
 Multi-Query Attention is a **memory-efficient** variant of Multi-Head Attention. The key insight: all query heads **share** a single key head and a single value head. Instead of H separate K and V projections, you have just one. This dramatically reduces memory usage in the KV cache during generation (by roughly H×) while retaining most of the model quality.
@@ -41,7 +47,7 @@ Every query head uses the **same** K and V, but they each have their own Q proje
 
 ### File: `neutro/layers/attention/mqa.py`
 
-### Step 1: `__init__` — line 6
+### Step 1: `__init__`
 
 ```python
 class MultiQueryAttention(BaseAttention):
@@ -52,13 +58,13 @@ class MultiQueryAttention(BaseAttention):
         self.head_dim = key_dim // num_heads
 ```
 
-🔍 **Line 6**: Inherits from `BaseAttention` — we get `scaled_dot_product_attention` for free.
+🔍 Inherits from `BaseAttention` — we get `scaled_dot_product_attention` for free.
 
-🔍 **Line 8**: `num_heads` — number of **query** heads. This is H.
+🔍 `num_heads` — number of **query** heads. This is H.
 
-🔍 **Line 10**: `head_dim = key_dim // num_heads` — the dimension of each single head. Since K and V have only one head, their total dimension equals `head_dim` (not `key_dim`).
+🔍 `head_dim = key_dim // num_heads` — the dimension of each single head. Since K and V have only one head, their total dimension equals `head_dim` (not `key_dim`).
 
-### Step 2: `build` — line 12
+### Step 2: `build`
 
 ```python
 def build(self, input_shape):
@@ -69,7 +75,7 @@ def build(self, input_shape):
     super().build(input_shape)
 ```
 
-🔍 **Line 15**: **Here's the key difference from MHA!** 
+🔍 **Here's the key difference from MHA!**
 - `Wq`: `(embed_dim, key_dim)` — same as MHA, maps to all H heads.
 - `Wk`: `(embed_dim, head_dim)` — **not** `(embed_dim, key_dim)`! Only one head's worth.
 - `Wv`: `(embed_dim, head_dim)` — same as Wk, only one head's worth.
@@ -78,9 +84,9 @@ def build(self, input_shape):
 - MHA `Wk`: `(embed_dim, 512)` — 512 parameters per input dim.
 - MQA `Wk`: `(embed_dim, 64)` — 64 parameters per input dim. **8× smaller!**
 
-🔍 **Line 16**: `Wo`: `(key_dim, embed_dim)` — the output projection still goes from full `key_dim` back to `embed_dim`. The queries still produce H heads worth of output.
+🔍 `Wo`: `(key_dim, embed_dim)` — the output projection still goes from full `key_dim` back to `embed_dim`. The queries still produce H heads worth of output.
 
-### Step 3: `forward` — line 19
+### Step 3: `forward`
 
 ```python
 def forward(self, query, value=None, key=None, mask=None, training=False):
@@ -90,13 +96,13 @@ def forward(self, query, value=None, key=None, mask=None, training=False):
     Q = np.dot(query, self.params['Wq']).reshape(batch_size, -1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
 ```
 
-🔍 **Line 23**: **Q projection** is the same as MHA: `(B, S, D) @ (D, key_dim)` → `(B, S, key_dim)` → reshape to `(B, H, S, d)`.
+🔍 **Q projection** is the same as MHA: `(B, S, D) @ (D, key_dim)` → `(B, S, key_dim)` → reshape to `(B, H, S, d)`.
 
 ```python
     K, V = np.dot(key, self.params['Wk']).reshape(batch_size, -1, 1, self.head_dim).transpose(0, 2, 1, 3), np.dot(value, self.params['Wv']).reshape(batch_size, -1, 1, self.head_dim).transpose(0, 2, 1, 3)
 ```
 
-🔍 **Line 24**: **K and V projections** — the key difference!
+🔍 **K and V projections** — the key difference!
 
 `np.dot(key, self.params['Wk'])` → `(B, S, head_dim)` — only one head's worth of dimensions.
 
@@ -110,7 +116,7 @@ Then `.transpose(0, 2, 1, 3)` → `(B, 1, S, d)`.
     attn_output = self.scaled_dot_product_attention(Q, K, V, mask)
 ```
 
-🔍 **Line 25**: Call `scaled_dot_product_attention` from `BaseAttention`. Here's where the magic happens:
+🔍 Call `scaled_dot_product_attention` from `BaseAttention`. Here's where the magic happens:
 
 - `Q` is `(B, H, S, d)`
 - `K` is `(B, 1, S, d)`
@@ -127,11 +133,11 @@ NumPy **broadcasts** the `1` in K and V to match `H` during the matrix multiply 
     return np.dot(out, self.params['Wo'])
 ```
 
-🔍 **Line 26–27**: Merge heads and apply output projection — identical to MHA.
+🔍 Merge heads and apply output projection — identical to MHA.
 
 📐 `(B, H, S, d)` → `(B, S, H*d)` = `(B, S, key_dim)` → `(B, S, embed_dim)`.
 
-### Step 4: `backward` — line 29
+### Step 4: `backward`
 
 ```python
 def backward(self, grad_output):
@@ -140,9 +146,9 @@ def backward(self, grad_output):
     return None
 ```
 
-🔍 **Line 29**: The MQA backward pass is **currently a placeholder**. A full implementation would follow the same structure as MHA's backward, with one critical difference: gradients for K and V need to be **summed across all H heads** (since the single K/V head was broadcast to all query heads). 
+🔍 The MQA backward pass is **currently a placeholder**. A full implementation would follow the same structure as MHA's backward, with one critical difference: gradients for K and V need to be **summed across all H heads** (since the single K/V head was broadcast to all query heads).
 
-🔍 **Line 32**: Returns `None` — this means MQA currently cannot be used for training. In practice, this is an honest note to the reader that implementing the full backward pass is a good exercise! The structure is:
+🔍 Returns `None` — this means MQA currently cannot be used for training. In practice, this is an honest note to the reader that implementing the full backward pass is a good exercise! The structure is:
 1. Compute dWo, d_pre_output (same as MHA).
 2. Backprop through attention (same as MHA).
 3. For dWk and dWv: **sum dK_heads and dV_heads across the head dimension** before computing weight gradients.
@@ -157,8 +163,8 @@ import numpy as np
 layer = MultiQueryAttention(num_heads=8, key_dim=512)
 x = np.random.randn(32, 10, 256)
 layer.build(x.shape)
-y = layer(x)  # forward works fine
-# layer.backward(grad)  # returns None — training not yet implemented
+y = layer(x) # forward works fine
+# layer.backward(grad) # returns None — training not yet implemented
 ```
 
 ## When to use MQA vs MHA

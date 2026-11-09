@@ -1,5 +1,11 @@
 # Conv1D
 
+> **Implementation note:** `Conv1D` delegates its gradient to
+> `Conv1DFunction` in `neutro/autograd/custom_ops.py`; the layer itself does
+> not define `backward`. The manual code below is illustrative; the forward
+> math and shapes still apply. See [Layer base class](../base.md).
+
+
 ## What does this layer do?
 
 Conv1D slides a small 1D filter (kernel) across a sequence, detecting local patterns like phrases in text or short motifs in time-series data. Each filter learns to fire when it sees a specific pattern at a certain position.
@@ -51,11 +57,11 @@ def __init__(self, filters, kernel_size, strides=1, padding='valid', activation=
     self.bias_initializer = get_initializer(bias_initializer)
 ```
 
-🔍 **Line `kernel_size`**: We normalize `kernel_size` to always be a tuple. If the user passes `kernel_size=3`, it becomes `(3,)`. The same is done for `strides` — this avoids guarding against `int` vs `tuple` later.
+🔍 We normalize `kernel_size` to always be a tuple. If the user passes `kernel_size=3`, it becomes `(3,)`. The same is done for `strides` — this avoids guarding against `int` vs `tuple` later.
 
-🔍 **Line `get_activation`**: We support any activation from `neutro.activations` (e.g. `'relu'`, `'sigmoid'`). Turning the name into a callable object is handled by `get_activation()`, which returns either a function or `None` (meaning linear / no activation).
+🔍 We support any activation from `neutro.activations` (e.g. `'relu'`, `'sigmoid'`). Turning the name into a callable object is handled by `get_activation()`, which returns either a function or `None` (meaning linear / no activation).
 
-🔍 **Line `kernel_initializer`**: The weight matrix is not created here — only the initializer function is stored. Actual allocation happens in `build()`, which needs to know the input shape.
+🔍 The weight matrix is not created here — only the initializer function is stored. Actual allocation happens in `build()`, which needs to know the input shape.
 
 ### Step 2: `build`
 

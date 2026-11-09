@@ -1,52 +1,79 @@
 # Metrics
 
-## Theory
+Metrics measure model performance for reporting. Unlike losses, they do not
+produce gradients.
 
-Metrics quantify model performance during training and evaluation. Unlike losses, metrics are not used for gradient computation — they are only reported for monitoring.
+Every metric implements `__call__(y_true, y_pred) -> scalar` and
+`get_name -> str`.
 
-Every metric in `neutro` implements:
-- `__call__(y_true, y_pred) → scalar`: compute the metric value.
+Source: `neutro/metrics/`.
 
-## Implementation Guide
+---
 
-### File: `neutro/metrics/base.py`
+## Accuracy — `neutro/metrics/accuracy.py`
 
-### Accuracy — `neutro/metrics/accuracy.py`
+Compares argmax predictions with argmax targets (or rounded values for binary
+outputs):
 
-$$\text{Accuracy} = \frac{1}{N} \sum_{i=1}^N \mathbf{1}(\arg\max y_{\text{pred},i} = \arg\max y_{\text{true},i})$$
+$$\text{Accuracy} = \frac{1}{N}\sum_{i=1}^{N}\mathbf{1}(\arg\max y_{\text{pred},i} = \arg\max y_{\text{true},i})$$
 
-Works with one-hot targets.
+Use with one-hot targets.
 
-### Sparse Accuracy — `neutro/metrics/sparse_accuracy.py`
+---
 
-Same as Accuracy but `y_true` is integer-encoded.
+## Sparse Accuracy — `neutro/metrics/sparse_accuracy.py`
 
-### Precision — `neutro/metrics/precision.py`
+Compares integer targets directly:
 
-$$\text{Precision} = \frac{TP}{TP + FP}$$
+```text
+y_true: (B,) or (B, S) integers
+y_pred: (B, C) or (B, S, C) probabilities/logits
+```
 
-### Recall — `neutro/metrics/recall.py`
+---
 
-$$\text{Recall} = \frac{TP}{TP + FN}$$
+## Precision, Recall, F1 — `neutro/metrics/precision.py`, `recall.py`, `f1_score.py`
 
-### F1 Score — `neutro/metrics/f1_score.py`
+$$\text{Precision} = \frac{TP}{TP + FP}, \quad
+\text{Recall} = \frac{TP}{TP + FN}$$
 
 $$F_1 = 2 \cdot \frac{\text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}$$
 
-## Usage Example
+These are binary metrics; pass binary predictions/targets.
+
+---
+
+## Usage
 
 ```python
-from neutro.metrics import Accuracy
+import numpy as np
+from neutro.metrics import Accuracy, SparseAccuracy
 
-acc = Accuracy()
 y_true = np.array([[0, 1, 0], [1, 0, 0]])
 y_pred = np.array([[0.1, 0.8, 0.1], [0.7, 0.2, 0.1]])
-acc_value = acc(y_true, y_pred)  # scalar
 
-# In model
-model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+print(Accuracy()(y_true, y_pred)) # 1.0
+
+print(SparseAccuracy()(
+    np.array([1, 0]),
+    np.array([[0.1, 0.8, 0.1], [0.7, 0.2, 0.1]]),
+)) # 1.0
 ```
+
+In a model:
+
+```python
+model.compile(
+    optimizer="adam",
+    loss="categorical_crossentropy",
+    metrics=["accuracy"],
+)
+```
+
+For integer labels, use `metrics=["sparse_accuracy"]`.
+
+---
 
 ## References
 
-- Keras Metrics API. [Keras.io](https://keras.io/api/metrics/)
+- Keras Metrics API: <https://keras.io/api/metrics/>

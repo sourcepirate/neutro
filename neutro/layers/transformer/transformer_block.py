@@ -15,9 +15,12 @@ class TransformerBlock(Layer):
         self.causal = causal
         self.pre_norm = pre_norm
         if use_flash:
-            self.att = FlashAttention(num_heads=num_heads, key_dim=embed_dim)
+            self.attention = FlashAttention(num_heads=num_heads, key_dim=embed_dim)
         else:
-            self.att = MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
+            self.attention = MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
+        # Backwards-compatible alias. New code should use ``self.attention``;
+        # older examples and tests used ``self.att``.
+        self.att = self.attention
         self.ffn = [Dense(ff_dim, activation="relu"), Dense(embed_dim)]
         self.layernorm1 = LayerNormalization(epsilon=1e-6)
         self.layernorm2 = LayerNormalization(epsilon=1e-6)
@@ -25,7 +28,7 @@ class TransformerBlock(Layer):
         self.dropout2 = Dropout(rate)
 
     def build(self, input_shape):
-        self.att.build(input_shape)
+        self.attention.build(input_shape)
         curr_shape = input_shape
         for layer in self.ffn:
             layer.build(curr_shape)
@@ -56,7 +59,7 @@ class TransformerBlock(Layer):
         if self.pre_norm:
             # Pre-Norm architecture
             norm1 = self.layernorm1(inputs, training=training)
-            attn_output = self.att(norm1, mask=mask, training=training, kv_cache=kv_cache, layer_id=layer_id)
+            attn_output = self.attention(norm1, mask=mask, training=training, kv_cache=kv_cache, layer_id=layer_id)
             attn_dropped = self.dropout1(attn_output, training=training)
             h = inputs + attn_dropped
             
@@ -67,7 +70,7 @@ class TransformerBlock(Layer):
             return h + ffn_dropped
         else:
             # Post-Norm architecture
-            attn_output = self.att(inputs, mask=mask, training=training, kv_cache=kv_cache, layer_id=layer_id)
+            attn_output = self.attention(inputs, mask=mask, training=training, kv_cache=kv_cache, layer_id=layer_id)
             attn_dropped = self.dropout1(attn_output, training=training)
             out1 = self.layernorm1(inputs + attn_dropped, training=training)
 

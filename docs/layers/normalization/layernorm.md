@@ -1,5 +1,11 @@
 # Layer Normalization
 
+> **Implementation note:** The current layer relies on the tape-backed
+> `Layer.backward`; it does not define `backward`. The manual code below is
+> illustrative; the forward math and shapes still apply. See
+> [Layer base class](../base.md#backward-the-tape-backed-fallback).
+
+
 ## What does this layer do?
 
 Layer Normalization (LayerNorm) makes training stable by controlling the distribution of activations inside a neural network. For each input sample, it rescales all features to have zero mean and unit variance, then applies a learned scale (`gamma`) and shift (`beta`).
@@ -50,7 +56,7 @@ def forward(self, x, training=False):
     return self.params['gamma'] * self.x_norm + self.params['beta']
 ```
 
-🔍 **Line `self.x = x`**: Saves the input for the backward pass. Without this, backward wouldn't know what `x` was during forward.
+🔍 Saves the input for the backward pass. Without this, backward wouldn't know what `x` was during forward.
 
 📐 **`np.mean(x, axis=-1, keepdims=True)`**: Computes mean over the last (feature) axis. With `keepdims`, a `(B, S, D)` input produces a `(B, S, 1)` mean — broadcasting back to `(B, S, D)` when you subtract it.
 
@@ -98,8 +104,8 @@ def backward(self, grad_output):
 Think of it as:
 ```
 x → [center: x - μ] → [scale: /σ] → x̂ → [affine: γ·x̂ + β] → y
-                    ↑                  ↑                     ↑
-               μ = mean(x)        σ = sqrt(var(x))       γ, β learned
+                    ↑ ↑ ↑
+               μ = mean(x) σ = sqrt(var(x)) γ, β learned
 ```
 
 The backward pass reverses this chain. You don't need to memorize the big formula — just know that it's the chain rule correctly threaded through the mean and variance dependencies.

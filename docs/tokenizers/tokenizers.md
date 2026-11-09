@@ -1,56 +1,107 @@
 # Tokenizers
 
-## Theory
+Tokenizers convert raw text into integer token ids for a model.
 
-Tokenizers convert raw text into integer token IDs for model input. `neutro` implements byte-level BPE (Byte-Pair Encoding), the algorithm used by GPT-2/4 and Llama.
+Neutro implements byte-level BPE (Byte-Pair Encoding), the algorithm behind
+GPT-2/4 and many Llama-style tokenizers.
 
-### BPE Tokenizer — `neutro/tokenizers/bpe.py`
+Source: `neutro/tokenizers/bpe.py` and `neutro/tokenizers/tiktoken_compat.py`.
 
-Byte-Pair Encoding works in three stages:
+---
 
-1. **Pre-tokenization**: Split text into words using regex (GPT-2 style: `'s | 't | 're | 've | 'm | 'll | 'n | \p{L}+ | \p{N}+ | [^\s\p{L}\p{N}]+`).
-2. **Byte encoding**: Convert each character to its byte representation to handle all Unicode seamlessly (GPT-2 trick).
-3. **Merge learning**: Repeatedly replace the most frequent pair of adjacent tokens with a new merged token until a vocabulary size is reached.
+## Byte-level BPE
 
-Encoding a new text:
-```python
-def encode(self, text):
-    tokens = self._pre_tokenize(text)
-    for pair, new_id in sorted(self.merges):
-        tokens = self._merge_pair(tokens, pair, new_id)
-    return tokens
-```
+The algorithm has three stages:
 
-### RegexTokenizer — `neutro/tokenizers/bpe.py`
+1. **Pre-tokenization** — split text into chunks with a regex (words,
+   punctuation, whitespace, …).
+2. **Byte encoding** — convert each chunk to UTF-8 bytes. This handles any
+   Unicode text without an unknown-token problem.
+3. **Merge learning** — repeatedly replace the most frequent adjacent pair of
+   token ids with a new id, until the vocabulary reaches the requested size.
 
-Extends BPE with:
-- Regex-based pre-tokenization (configurable pattern).
-- Special token handling (`<|endoftext|>`, etc.).
-- `encode` and `decode` methods consistent with the Keras style.
+Encoding applies the learned merges greedily, always merging the pair with the
+lowest learned rank first.
 
-### TikToken Compatibility — `neutro/tokenizers/tiktoken_compat.py`
+---
 
-Provides a `TikTokenTokenizer` that can load OpenAI's TikToken BPE ranks (from `cl100k_base`, `gpt2`, etc.) and use them directly. This bridges `neutro` with OpenAI's tokenization system.
+## `BPETokenizer`
+
+Plain byte-level BPE without regex splitting:
 
 ```python
-def load_tiktoken_bpe(bpe_file):
-    # Reads the BPE merge file in TikToken format
-    with open(bpe_file, 'rb') as f:
-        return pickle.load(f)
+from neutro.tokenizers import BPETokenizer
+
+tok = BPETokenizer
+tok.train("hello world, hello there", vocab_size=300)
+
+ids = tok.encode("hello world")
+text = tok.decode(ids)
+print(ids[:10]) # integer ids
+print(text) # "hello world"
 ```
 
-## Usage Example
+`train` takes a **string**, not a list of strings. `vocab_size` must be at least
+256 because the base byte vocabulary is always present.
+
+---
+
+## `RegexTokenizer`
+
+Adds GPT-style regex pre-tokenization and special tokens:
 
 ```python
-from neutro.tokenizers import RegexTokenizer, TikTokenTokenizer
+from neutro.tokenizers import RegexTokenizer
 
-tokenizer = RegexTokenizer()
-tokenizer.train(["hello world", "hello there"])
-tokens = tokenizer.encode("hello world")
-text = tokenizer.decode(tokens)
+tok = RegexTokenizer()
+tok.train("hello world. hello there!", vocab_size=300)
+
+tok.register_special_tokens({"<|endoftext|>": 300})
+ids = tok.encode("hello world", allowed_special="all")
+print(tok.decode(ids))
 ```
+
+`allowed_special` controls how special-token strings are treated during
+encoding: `"none"` (default), `"all"`, or an iterable of allowed keys.
+
+The default pattern is the GPT-4 split pattern (`GPT4_SPLIT_PATTERN`). You can
+pass a custom regex via `RegexTokenizer(pattern=...)`.
+
+---
+
+## Saving and loading
+
+```python
+tok.save("tokenizer")
+tok2 = RegexTokenizer()
+tok2.load("tokenizer")
+```
+
+This writes/reads `tokenizer.json`, including the pattern, encoder, and special
+tokens.
+
+`tok.vocab_size` is the number of byte/merge tokens plus special tokens.
+
+---
+
+## Tiktoken compatibility
+
+`TiktokenCompatibleTokenizer` loads OpenAI's `.tiktoken` rank files:
+
+```python
+from neutro.tokenizers import get_gpt2_tokenizer
+
+tok = get_gpt2_tokenizer # downloads r50k_base on first use
+ids = tok.encode("hello world")
+```
+
+`load_tiktoken_bpe(path_or_url)` parses the base64-encoded token/rank lines and
+returns a `bytes -> int` rank map. It does not use pickle.
+
+---
 
 ## References
 
 - Sennrich, R., Haddow, B., & Birch, A. (2016). **Neural Machine Translation of Rare Words with Subword Units**. [arXiv:1508.07909](https://arxiv.org/abs/1508.07909)
-- GPT-2 Tokenizer: Radford, A., et al. (2019). **Language Models are Unsupervised Multitask Learners**.
+- Radford, A., et al. (2019). **Language Models are Unsupervised Multitask Learners**. [OpenAI](https://openai.com/research/better-language-models/)
+- OpenAI tiktoken: <https://github.com/openai/tiktoken>

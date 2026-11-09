@@ -11,7 +11,19 @@ def get_active_tape():
 
 
 class GradientTape:
-    """Context manager that records differentiable ops."""
+    """Context manager that records differentiable ops.
+
+    Use it as::
+
+        with GradientTape() as tape:
+            tape.watch(loss_inputs)
+            loss = compute_loss()
+
+        tape.gradient(loss, loss_inputs)
+
+    The tape records only ops whose inputs are watched. It does not persist a
+    graph after ``gradient``; create a fresh tape for each training step.
+    """
 
     def __init__(self):
         self._ops: list[dict] = []
@@ -39,7 +51,11 @@ class GradientTape:
     # -- Recording ----------------------------------------------------------
 
     def watch(self, tensor):
-        """Mark ``tensor`` (or iterable of tensors) as watched."""
+        """Mark ``tensor`` (or an iterable of tensors) as watched.
+
+        Watching is the explicit replacement for ``requires_grad``. Ops with
+        no watched inputs are not recorded.
+        """
         if isinstance(tensor, (list, tuple, set)):
             for item in tensor:
                 self.watch(item)
@@ -64,7 +80,14 @@ class GradientTape:
     def gradient(self, target, sources):
         """Compute ``d target / d sources``.
 
-        Returns a list aligned with ``sources`` (entries ``None`` if no path).
+        Args:
+            target: Scalar (or any) ``Tensor`` to differentiate.
+            sources: A ``Tensor`` or iterable of ``Tensor`` objects.
+
+        Returns:
+            A list aligned with ``sources``. Entries are ``None`` when there is
+            no path from ``target`` to that source. Each source's ``.grad`` is
+            also set to the corresponding array.
         """
         from .tensor import Tensor as TensorClass
 

@@ -3,9 +3,11 @@ from ...layers import Embedding, TransformerBlock, Dense, Softmax
 from ...layers.normalization.layernorm import LayerNormalization
 
 def GPT1(vocab_size, seq_len, dim=768, n_heads=12, n_layers=12):
-    """
-    GPT-1: The beginning of the end for our free time.
-    Uses learned positional embeddings and "Post-Norm" blocks.
+    """Tiny GPT-1-style stack with Post-Norm blocks.
+
+    This simplified version does **not** add a positional embedding; a real
+    GPT-1 would add learned positions. See ``TokenPositionEmbedding`` if you
+    want to experiment with one.
     """
     model = Sequential([
         Embedding(vocab_size, dim, input_shape=(seq_len,)),
@@ -37,3 +39,9 @@ def GPT2(vocab_size, seq_len, dim=768, n_heads=12, n_layers=12):
     model.add(Dense(vocab_size))
     model.add(Softmax())
     return model
+
+
+# Explicit aliases: these models are tiny educational stacks, not full GPT
+# checkpoints. The ``Tiny`` suffix matches the other language factories.
+GPT1Tiny = GPT1
+GPT2Tiny = GPT2

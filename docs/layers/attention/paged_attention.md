@@ -1,5 +1,11 @@
 # PagedAttention
 
+> **Implementation note:** The current layer relies on the tape-backed
+> `Layer.backward`; it does not define `backward`. The manual code below is
+> illustrative; the forward math and shapes still apply. See
+> [Layer base class](../base.md#backward-the-tape-backed-fallback).
+
+
 ## What does this layer do?
 
 `PagedAttention` implements the **block-level KV cache management** introduced by Kwon et al. (2023) in the vLLM system. It stores Key and Value tensors in **fixed-size blocks (pages)** managed through a **block table**, eliminating memory fragmentation and enabling near-100% cache utilization.
@@ -9,9 +15,9 @@
 A naive KV cache (`KVCache`) grows by `np.concatenate` at each generation step:
 
 ```
-Step 1: cache = [K0]                    # shape (B, H, 1, d)
-Step 2: cache = [K0, K1]               # shape (B, H, 2, d)
-Step 3: cache = [K0, K1, K2]           # shape (B, H, 3, d)
+Step 1: cache = [K0] # shape (B, H, 1, d)
+Step 2: cache = [K0, K1] # shape (B, H, 2, d)
+Step 3: cache = [K0, K1, K2] # shape (B, H, 3, d)
 ```
 
 This causes **fragmentation**: each reallocation may copy the entire cache to a new memory region. The cache can only shrink/expand at sequence boundaries.
@@ -23,14 +29,14 @@ This causes **fragmentation**: each reallocation may copy the entire cache to a 
 ```
 Physical blocks (pre-allocated):
 ┌─────────┬─────────┬─────────┬─────────┐
-│ Block 0 │ Block 1 │ Block 2 │ Block 3 │  ...
+│ Block 0 │ Block 1 │ Block 2 │ Block 3 │ ...
 │ (4 tok) │ (4 tok) │ (4 tok) │ (4 tok) │
 └─────────┴─────────┴─────────┴─────────┘
 
 Block table for layer 0: [0, 1, 2, ...]
-                          │  │  └── physical block 2  (logical block 2)
-                          │  └───── physical block 1  (logical block 1)
-                          └──────── physical block 0  (logical block 0)
+                          │ │ └── physical block 2 (logical block 2)
+                          │ └───── physical block 1 (logical block 1)
+                          └──────── physical block 0 (logical block 0)
 
 Each block fills up to block_size, then a new block is allocated.
 No reallocation or concatenation — just write to the next slot.
@@ -48,9 +54,9 @@ Instead of assembling a contiguous K, V tensor, `PagedAttention`'s forward pass 
 
 ---
 
-## Class 1: `PagedKVCache` — lines 6–73
+## Class 1: `PagedKVCache`
 
-### `__init__` — line 16
+### `__init__`
 
 ```python
 class PagedKVCache:
@@ -64,19 +70,19 @@ class PagedKVCache:
         self.total_tokens = {}
 ```
 
-🔍 **Line 16**: `PagedKVCache` is **not** a `Layer` — it's a container, like `KVCache`.
+🔍 `PagedKVCache` is **not** a `Layer` — it's a container, like `KVCache`.
 
-🔍 **Line 19**: `kv_blocks` is lazily initialized in `_ensure_storage`. Shape: `(num_blocks, 2, num_heads, block_size, head_dim)`. The `2` is for K (index 0) and V (index 1).
+🔍 `kv_blocks` is lazily initialized in `_ensure_storage`. Shape: `(num_blocks, 2, num_heads, block_size, head_dim)`. The `2` is for K (index 0) and V (index 1).
 
-🔍 **Line 20**: `block_tables` — dictionary mapping `layer_id` to a list of physical block IDs. This is the core data structure that maps the logical sequence to physical memory.
+🔍 `block_tables` — dictionary mapping `layer_id` to a list of physical block IDs. This is the core data structure that maps the logical sequence to physical memory.
 
-🔍 **Line 21**: `free_blocks` — list of available physical block IDs. Starts as `[0, 1, 2, ..., num_blocks-1]`. Blocks are popped from the end as they're allocated.
+🔍 `free_blocks` — list of available physical block IDs. Starts as `[0, 1, 2, ..., num_blocks-1]`. Blocks are popped from the end as they're allocated.
 
-🔍 **Line 22**: `block_fill` — integer array tracking how many valid tokens are stored in each physical block. A block is "full" when `block_fill[phys_id] == block_size`.
+🔍 `block_fill` — integer array tracking how many valid tokens are stored in each physical block. A block is "full" when `block_fill[phys_id] == block_size`.
 
-🔍 **Line 23**: `total_tokens` — dictionary tracking total cached tokens per layer. Used for RoPE position calculation.
+🔍 `total_tokens` — dictionary tracking total cached tokens per layer. Used for RoPE position calculation.
 
-### `_ensure_storage` — line 25
+### `_ensure_storage`
 
 ```python
 def _ensure_storage(self, num_heads, head_dim):
@@ -86,11 +92,11 @@ def _ensure_storage(self, num_heads, head_dim):
         )
 ```
 
-🔍 **Line 25**: Lazy initialization. We don't know `num_heads` and `head_dim` until the first `update()` call, so the physical storage is allocated on first use.
+🔍 Lazy initialization. We don't know `num_heads` and `head_dim` until the first `update()` call, so the physical storage is allocated on first use.
 
 📐 **Shape**: `(num_blocks, 2, H, block_size, d)` — a flat pool of 5D tensors.
 
-### `update` — line 31
+### `update`
 
 ```python
 def update(self, k, v, layer_id):
@@ -117,13 +123,13 @@ def update(self, k, v, layer_id):
         self.total_tokens[layer_id] += 1
 ```
 
-🔍 **Line 39**: Extract `num_heads`, `seq_len`, `head_dim` from the incoming K tensor.
+🔍 Extract `num_heads`, `seq_len`, `head_dim` from the incoming K tensor.
 
-🔍 **Line 42–43**: First update for this `layer_id`? Create a new block table entry.
+🔍 First update for this `layer_id`? Create a new block table entry.
 
-🔍 **Line 48**: Process each token in the incoming sequence (this handles both prefill with S>1 and decode with S=1).
+🔍 Process each token in the incoming sequence (this handles both prefill with S>1 and decode with S=1).
 
-🔍 **Lines 49–52**: **Block allocation trigger** — if no blocks exist or the last block is full, pop a free block and append it to the block table. This is the key inefficiency of the naive cache: we never concatenate, we just write to the next available slot.
+🔍 **Block allocation trigger** — if no blocks exist or the last block is full, pop a free block and append it to the block table. This is the key inefficiency of the naive cache: we never concatenate, we just write to the next available slot.
 
 📐 **Block fill evolution** with `block_size=4`:
 - Token 0: block 0, fill=1
@@ -133,32 +139,32 @@ def update(self, k, v, layer_id):
 - Token 4: block 0 is full → allocate block 1, fill=1
 - ...
 
-🔍 **Lines 54–58**: Store K and V for this token into the physical block at position `fill`, then increment `block_fill` and `total_tokens`.
+🔍 Store K and V for this token into the physical block at position `fill`, then increment `block_fill` and `total_tokens`.
 
 🔍 **Why store K[0] not K?** The physical storage has no batch dimension. We take the first batch element (common for generation). `k[:, :, t, :]` is `(B, H, d)`; for B=1 this squeezes to `(H, d)`.
 
-### `get_block_table` — line 61
+### `get_block_table`
 
 ```python
 def get_block_table(self, layer_id):
     return self.block_tables.get(layer_id, []), self.block_fill
 ```
 
-🔍 **Line 62**: Returns `(block_table, block_fill)` — a tuple. The block table is a list of physical IDs; `block_fill` is the fill-level array for all blocks. The `PagedAttention._paged_forward` method uses both to iterate over valid KV data.
+🔍 Returns `(block_table, block_fill)` — a tuple. The block table is a list of physical IDs; `block_fill` is the fill-level array for all blocks. The `PagedAttention._paged_forward` method uses both to iterate over valid KV data.
 
-### `get_num_tokens` — line 65
+### `get_num_tokens`
 
 Returns the total cached tokens for a layer (used by RoPE position computation).
 
-### `reset` — line 68
+### `reset`
 
 Clears all state and restores the free list. Called between generation sequences.
 
 ---
 
-## Class 2: `PagedAttention` — lines 76–294
+## Class 2: `PagedAttention`
 
-### `__init__` — line 88
+### `__init__`
 
 ```python
 class PagedAttention(Layer):
@@ -166,15 +172,15 @@ class PagedAttention(Layer):
                  use_rope=False, **kwargs):
 ```
 
-🔍 **Line 94**: `block_size` serves double duty: it's both the page size for `PagedKVCache` and the tile size for block-iterated attention.
+🔍 `block_size` serves double duty: it's both the page size for `PagedKVCache` and the tile size for block-iterated attention.
 
-🔍 **Line 97**: `self.scale = 1.0 / sqrt(head_dim)` — the standard attention scaling factor.
+🔍 `self.scale = 1.0 / sqrt(head_dim)` — the standard attention scaling factor.
 
-### `build` — line 99
+### `build`
 
 Standard MHA-style weight initialization: four projection matrices `Wq, Wk, Wv, Wo` with shape `(embed_dim, key_dim)` or `(key_dim, embed_dim)`.
 
-### `_assemble_kv` — line 110
+### `_assemble_kv`
 
 ```python
 def _assemble_kv(self, kv_cache, layer_id, batch_size, d):
@@ -195,13 +201,13 @@ def _assemble_kv(self, kv_cache, layer_id, batch_size, d):
     return k_assembled, v_assembled
 ```
 
-🔍 **Line 110**: Assembles a contiguous K, V tensor from the block-based storage. This is used ONLY for the backward pass and for the regular KVCache fallback — the forward pass (`_paged_forward`) reads blocks directly.
+🔍 Assembles a contiguous K, V tensor from the block-based storage. This is used ONLY for the backward pass and for the regular KVCache fallback — the forward pass (`_paged_forward`) reads blocks directly.
 
 🔍 **Why assemble for backward?** The attention gradient formulas require the full K, V to compute `d_scores` and `d_attn_weights`. We need contiguous tensors for the standard MHA-style backward.
 
 📐 **Iteration**: For each physical block, copy its non-padding tokens (up to `block_fill[phys_id]`) into the assembled tensors.
 
-### `_paged_forward` — line 128
+### `_paged_forward`
 
 ```python
 def _paged_forward(self, Q, kv_cache, layer_id, mask, B, S_q, H, d):
@@ -247,34 +253,34 @@ def _paged_forward(self, Q, kv_cache, layer_id, mask, B, S_q, H, d):
     return O
 ```
 
-🔍 **Line 128**: This is the heart of PagedAttention. It implements the **online softmax** algorithm (identical to FlashAttention) but iterates over **physical blocks** from the block table instead of uniform tiles.
+🔍 This is the heart of PagedAttention. It implements the **online softmax** algorithm (identical to FlashAttention) but iterates over **physical blocks** from the block table instead of uniform tiles.
 
-🔍 **Lines 139–141**: Running statistics: `O` (output), `L` (sum of exponentials), `M` (max score). Same initialization as FlashAttention.
+🔍 Running statistics: `O` (output), `L` (sum of exponentials), `M` (max score). Same initialization as FlashAttention.
 
-🔍 **Line 143**: `pos` tracks the cumulative token position across blocks — used for mask slicing.
+🔍 `pos` tracks the cumulative token position across blocks — used for mask slicing.
 
-🔍 **Lines 149–153**: Load one physical block's K and V. `kv_blocks[phys_id, 0]` is `(H, block_size, d)`; we slice to `fill` valid tokens and add a batch dimension. For B>1, broadcast the cache (same KV for all batch items).
+🔍 Load one physical block's K and V. `kv_blocks[phys_id, 0]` is `(H, block_size, d)`; we slice to `fill` valid tokens and add a batch dimension. For B>1, broadcast the cache (same KV for all batch items).
 
 📐 `(H, fill, d)` → `[np.newaxis]` → `(1, H, fill, d)` → `broadcast_to` → `(B, H, fill, d)`
 
-🔍 **Line 155**: **Block-level attention scores**: `S = scale * Q @ Kb^T`. Shape: `(B, H, S_q, fill)` — only this block's worth of scores.
+🔍 **Block-level attention scores**: `S = scale * Q @ Kb^T`. Shape: `(B, H, S_q, fill)` — only this block's worth of scores.
 
-🔍 **Line 156–157**: Apply mask at the block level: `mask[:, pos:pos+fill]` slices the mask region corresponding to this block's KV positions.
+🔍 Apply mask at the block level: `mask[:, pos:pos+fill]` slices the mask region corresponding to this block's KV positions.
 
-🔍 **Lines 159–161**: **Local softmax**: `m_local` is the max within this block, `P` is the exponentiated scores, `l_local` is the local sum.
+🔍 **Local softmax**: `m_local` is the max within this block, `P` is the exponentiated scores, `l_local` is the local sum.
 
-🔍 **Lines 163–169**: **Online softmax merge**: 
+🔍 **Online softmax merge**:
 - `M_new = max(M, m_local)` — new global max
 - `alpha = exp(M - M_new)` — rescaling for old statistics
 - `beta = exp(m_local - M_new)` — rescaling for new block
 - `O = alpha * O + beta * (P @ Vb)` — merge output
 - `L = alpha * L + beta * l_local` — merge sum
 
-🔍 **Line 172**: **Final normalization**: `O = O / L`. Same as FlashAttention.
+🔍 **Final normalization**: `O = O / L`. Same as FlashAttention.
 
-🔍 **Lines 173–174**: Cache `paged_M` and `paged_L` (not currently used in backward — the backward uses assembled K, V and recomputed attention weights).
+🔍 Cache `paged_M` and `paged_L` (not currently used in backward — the backward uses assembled K, V and recomputed attention weights).
 
-### `_standard_forward` — line 177
+### `_standard_forward`
 
 ```python
 def _standard_forward(self, Q, K, V, mask):
@@ -287,9 +293,9 @@ def _standard_forward(self, Q, K, V, mask):
     return attn_w @ V
 ```
 
-🔍 **Line 177**: Standard softmax attention. Used when no cache or a regular `KVCache` is provided. Caches `self.attention_weights` for the standard backward path.
+🔍 Standard softmax attention. Used when no cache or a regular `KVCache` is provided. Caches `self.attention_weights` for the standard backward path.
 
-### `forward` — line 187
+### `forward`
 
 ```python
 def forward(self, x, mask=None, training=False, kv_cache=None, layer_id=None):
@@ -305,7 +311,7 @@ def forward(self, x, mask=None, training=False, kv_cache=None, layer_id=None):
     V = (x @ self.params['Wv']).reshape(batch_size, seq_len, H, d).transpose(0, 2, 1, 3)
 ```
 
-🔍 **Lines 195–197**: Standard Q, K, V projections and head splitting. Identical to FlashAttention and MHA.
+🔍 Standard Q, K, V projections and head splitting. Identical to FlashAttention and MHA.
 
 ```python
     if self.use_rope:
@@ -324,7 +330,7 @@ def forward(self, x, mask=None, training=False, kv_cache=None, layer_id=None):
         K = apply_rotary_emb(K, f_cis)
 ```
 
-🔍 **Lines 199–212**: RoPE support. Handles both `PagedKVCache` (via `get_num_tokens`) and regular `KVCache` (via `k_cache[layer_id].shape[2]`). During decode with cache, only the last position's RoPE is applied.
+🔍 RoPE support. Handles both `PagedKVCache` (via `get_num_tokens`) and regular `KVCache` (via `k_cache[layer_id].shape[2]`). During decode with cache, only the last position's RoPE is applied.
 
 ```python
     if kv_cache is not None and layer_id is not None:
@@ -344,18 +350,18 @@ def forward(self, x, mask=None, training=False, kv_cache=None, layer_id=None):
         attn_out = self._standard_forward(Q, K, V, mask)
 ```
 
-🔍 **Line 214**: **Cache routing** — three paths:
+🔍 **Cache routing** — three paths:
 
-1. **PagedKVCache** (line 216–220): 
+1. **PagedKVCache**:
    - `kv_cache.update(K, V, layer_id)` — store current K, V into blocks
    - `_assemble_kv` — build contiguous K, V for backward
    - `_paged_forward` — block-iterated attention with online softmax
 
-2. **Regular KVCache** (line 221–224):
+2. **Regular KVCache**:
    - Standard `kv_cache.update` (concatenate)
    - Standard softmax attention
 
-3. **No cache** (line 225–228):
+3. **No cache**:
    - Self-attention with the current Q, K, V
 
 ```python
@@ -365,13 +371,13 @@ def forward(self, x, mask=None, training=False, kv_cache=None, layer_id=None):
     return O_merged @ self.params['Wo']
 ```
 
-🔍 **Lines 230–233**: Store Q for backward, merge heads, apply output projection.
+🔍 Store Q for backward, merge heads, apply output projection.
 
-### `_compute_attention_weights` — line 235
+### `_compute_attention_weights`
 
 Helper that recomputes `softmax(QK^T / sqrt(d))` from the assembled Q, K, V. Used by the backward pass when the paged forward path didn't cache `attention_weights`.
 
-### `backward` — line 244
+### `backward`
 
 ```python
 def backward(self, grad_output):
@@ -388,7 +394,7 @@ def backward(self, grad_output):
     do = do_merged.reshape(batch_size, seq_len, H, d).transpose(0, 2, 1, 3)
 ```
 
-🔍 **Lines 250–255**: Standard `dWo` and `dO` computation — same as MHA.
+🔍 Standard `dWo` and `dO` computation — same as MHA.
 
 ```python
     if hasattr(self, 'attention_weights'):
@@ -410,11 +416,11 @@ def backward(self, grad_output):
     dK_heads = d_scores.transpose(0, 1, 3, 2) @ self.Q
 ```
 
-🔍 **Lines 257–262**: Two paths:
+🔍 Two paths:
 - **Standard path** (`self.attention_weights` exists): use cached weights from `_standard_forward`
 - **Paged path** (no `attention_weights`): recompute from assembled `self.K`, `self.V`
 
-🔍 **Lines 264–273**: **Standard MHA gradient computation** — the same softmax gradient formula used in `MultiHeadAttention.backward`:
+🔍 **Standard MHA gradient computation** — the same softmax gradient formula used in `MultiHeadAttention.backward()`:
 - `d_attn_weights = dO @ V^T` — gradient of attention logits
 - `dV = W^T @ dO` — gradient through weighted sum
 - `d_scores = W * (d_attn_weights - sum(W * d_attn_weights)) / sqrt(d)` — softmax gradient
@@ -427,7 +433,7 @@ def backward(self, grad_output):
         dV_heads = dV_heads[:, :, -seq_len:, :]
 ```
 
-🔍 **Lines 275–277**: **Critical cache-aware fix**: When a cache was used, `dK_heads` and `dV_heads` include gradients for ALL cached tokens. But the current input's K, V projections only need gradients for the CURRENT input's tokens (the last `seq_len` positions). The cached tokens' gradients were already computed and applied when they were processed.
+🔍 **Critical cache-aware fix**: When a cache was used, `dK_heads` and `dV_heads` include gradients for ALL cached tokens. But the current input's K, V projections only need gradients for the CURRENT input's tokens (the last `seq_len` positions). The cached tokens' gradients were already computed and applied when they were processed.
 
 📐 `dK_heads` shape: `(B, H, S_total, d)` → `(B, H, S_current, d)` by slicing `[:, :, -seq_len:, :]`
 
@@ -450,9 +456,9 @@ def backward(self, grad_output):
             dv_flat @ self.params['Wv'].T).reshape(batch_size, seq_len, embed_dim)
 ```
 
-🔍 **Lines 279–281**: **Reverse RoPE** — apply complex conjugate rotation to unwrap the gradients.
+🔍 **Reverse RoPE** — apply complex conjugate rotation to unwrap the gradients.
 
-🔍 **Lines 283–296**: Flatten and compute weight gradients `dW = x^T @ d_proj`, then sum input gradients from all three paths.
+🔍 Flatten and compute weight gradients `dW = x^T @ d_proj`, then sum input gradients from all three paths.
 
 ---
 
@@ -478,15 +484,15 @@ cache = PagedKVCache(num_blocks=256, block_size=16)
 # Prefill: process 10 tokens
 x_prefill = np.random.randn(1, 10, 32)
 out = layer(x_prefill, kv_cache=cache, layer_id=0)
-print(cache.get_num_tokens(0))  # 10 tokens cached
+print(cache.get_num_tokens(0)) # 10 tokens cached
 
 # Decode: one token at a time
 x_decode = np.random.randn(1, 1, 32)
 for _ in range(5):
     out = layer(x_decode, kv_cache=cache, layer_id=0)
-    print(out.shape)  # (1, 1, 32)
+    print(out.shape) # (1, 1, 32)
 
-print(cache.get_num_tokens(0))  # 15 tokens cached
+print(cache.get_num_tokens(0)) # 15 tokens cached
 cache.reset()
 ```
 

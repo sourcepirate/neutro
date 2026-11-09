@@ -64,10 +64,10 @@ def weight_quantize_b1(W, eps=1e-6):
     return W_bin, beta
 ```
 
-- **Line 6**: $\alpha = \text{mean}(W)$. Centralizes weights to zero-mean before binarization.
-- **Line 7-8**: Sign function: $W_q = \text{Sign}(W - \alpha)$. Every value becomes exactly +1 or -1.
-- **Line 9**: $\beta = \text{mean}(|W|)$. Scaling factor that minimizes L2 error between real-valued and binarized weights.
-- **Line 10**: Returns $W_q \in \{-1, +1\}^{n \times m}$ and $\beta \in \mathbb{R}$.
+- $\alpha = \text{mean}(W)$. Centralizes weights to zero-mean before binarization.
+- Sign function: $W_q = \text{Sign}(W - \alpha)$. Every value becomes exactly +1 or -1.
+- $\beta = \text{mean}(|W|)$. Scaling factor that minimizes L2 error between real-valued and binarized weights.
+- Returns $W_q \in \{-1, +1\}^{n \times m}$ and $\beta \in \mathbb{R}$.
 
 ```python
 def weight_quantize_b158(W, eps=1e-6):
@@ -78,11 +78,11 @@ def weight_quantize_b158(W, eps=1e-6):
     return W_tern, beta
 ```
 
-- **Line 13**: $\gamma_w = \text{mean}(|W|)$. The absmean scale.
-- **Line 14**: Normalize by absmean: $W / \gamma_w$.
-- **Line 15**: Round to nearest integer and clip to $[-1, 1]$. Result: $W_q \in \{-1, 0, +1\}^{n \times m}$.
-- **Line 16**: $\beta = \text{mean}(|W|)$, same L2-minimizing scale as b1.
-- **Line 17**: Returns ternary weights and scale.
+- $\gamma_w = \text{mean}(|W|)$. The absmean scale.
+- Normalize by absmean: $W / \gamma_w$.
+- Round to nearest integer and clip to $[-1, 1]$. Result: $W_q \in \{-1, 0, +1\}^{n \times m}$.
+- $\beta = \text{mean}(|W|)$, same L2-minimizing scale as b1.
+- Returns ternary weights and scale.
 
 ```python
 def activation_quantize(x, bits=8, per_token=False, eps=1e-6):
@@ -100,15 +100,15 @@ def activation_quantize(x, bits=8, per_token=False, eps=1e-6):
     return x_quant, gamma
 ```
 
-- **Line 20**: $Q_b = 2^{b-1}$. For 8-bit: 128.
-- **Lines 21-24**: Per-token quantization (used during inference). Each token (row) gets its own $\gamma$.
-- **Lines 25-28**: Per-tensor quantization (used during training). A single $\gamma = ||x||_{\infty}$ for the whole tensor.
-- **Line 30**: Scale by $Q_b / \gamma$ and round.
-- **Line 31**: Clip to $[-127, 127]$ for 8-bit.
+- $Q_b = 2^{b-1}$. For 8-bit: 128.
+- Per-token quantization (used during inference). Each token (row) gets its own $\gamma$.
+- Per-tensor quantization (used during training). A single $\gamma = ||x||_{\infty}$ for the whole tensor.
+- Scale by $Q_b / \gamma$ and round.
+- Clip to $[-127, 127]$ for 8-bit.
 
 ### Class: `BitLinear`
 
-#### `__init__` (bitlinear.py:35)
+#### `__init__` (bitlinear.py)
 
 ```python
 class BitLinear(Layer):
@@ -122,7 +122,7 @@ class BitLinear(Layer):
 - **`use_bias`**: BitNet omits biases; kept for API compatibility.
 - **`per_token`**: Per-token vs per-tensor activation quantization.
 
-#### `build` (bitlinear.py:45)
+#### `build` (bitlinear.py)
 
 ```python
 def build(self, input_shape):
@@ -142,12 +142,12 @@ Two sets of parameters:
 | `gamma_ln` | `(input_dim,)` | SubLN scale |
 | `beta_ln` | `(input_dim,)` | SubLN shift |
 
-#### `forward` (bitlinear.py:65)
+#### `forward` (bitlinear.py)
 
 ```python
 def forward(self, inputs, training=False):
     self.inputs = inputs
-    x_norm = self._layernorm_forward(inputs)           # SubLN
+    x_norm = self._layernorm_forward(inputs) # SubLN
     x_q, self.gamma = self._activation_quantize(x_norm) # Activation quant
     W_q, self.beta = self._weight_quantize(self.params['W']) # Weight quant
 ```
@@ -170,7 +170,7 @@ def forward(self, inputs, training=False):
 - `* self.deq_scale`: element-wise broadcast — dequantizes back to full precision
 - Output: `(2, 8, 64)`
 
-#### `backward` (bitlinear.py:82)
+#### `backward` (bitlinear.py)
 
 ```python
 def backward(self, grad_output):

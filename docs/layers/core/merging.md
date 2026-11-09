@@ -1,10 +1,16 @@
 # Merge Layers: Add, Concatenate, Multiply, Average, Maximum, Minimum
 
+> **Implementation note:** The current layer relies on the tape-backed
+> `Layer.backward`; it does not define `backward`. The manual code below is
+> illustrative; the forward math and shapes still apply. See
+> [Layer base class](../base.md#backward-the-tape-backed-fallback).
+
+
 Merge layers combine **multiple input tensors** into a single output tensor. They are essential for building non-linear architectures like ResNets (skip connections), Inception modules, and multi-branch networks. Every merge layer takes a **list of tensors** as input.
 
 ## Shared structure
 
-All reduce-type merge layers (`Add`, `Multiply`, `Average`, `Maximum`, `Minimum`) inherit from `_ReduceBase` (`merging.py:11`), which provides the common `build`, `compute_output_shape`, and a `forward` that folds a single binary operation over the input list. Each concrete layer only implements `_combine(left, right)` — the per-pair reduction:
+All reduce-type merge layers (`Add`, `Multiply`, `Average`, `Maximum`, `Minimum`) inherit from `_ReduceBase` (`merging.py`), which provides the common `build`, `compute_output_shape`, and a `forward` that folds a single binary operation over the input list. Each concrete layer only implements `_combine(left, right)` — the per-pair reduction:
 
 ```python
 def forward(self, inputs, training=False):
@@ -18,7 +24,7 @@ def forward(self, inputs, training=False):
 
 `_to_tensor` coerces plain NumPy inputs into autograd `Tensor`s so the whole reduction is differentiable.
 
-## Add — `merging.py:42`
+## Add — `merging.py`
 
 ### What does this layer do?
 
@@ -47,7 +53,7 @@ The additive reduction routes the gradient unchanged back to every input, so ski
 
 ---
 
-## Concatenate — `merging.py:47`
+## Concatenate — `merging.py`
 
 ### What does this layer do?
 
@@ -93,7 +99,7 @@ def compute_output_shape(self, input_shape):
     return tuple(out_shape)
 ```
 
-🔍 **Line `if dim is None: concat_dim = None; break`**: This handles **symbolic shapes** where the batch dimension (or any dimension) is `None` at graph-building time. If any input has a `None` dimension on the concat axis, the output's concat dimension will also be `None`.
+🔍 This handles **symbolic shapes** where the batch dimension (or any dimension) is `None` at graph-building time. If any input has a `None` dimension on the concat axis, the output's concat dimension will also be `None`.
 
 📐 **Example**: Input shapes `[(None, 10), (None, 20)]` with `axis=-1` → `out_shape = (None, 30)`. But if one dimension is `None` on the concat axis, it propagates as `None`.
 
@@ -105,9 +111,9 @@ def forward(self, inputs, training=False):
     return np.concatenate(inputs, axis=self.axis)
 ```
 
-🔍 **Line `self.input_shapes = [i.shape for i in inputs]`**: We cache the **actual shape** of each input tensor. The backward pass needs the sizes along the concat axis to split the gradient correctly.
+🔍 We cache the **actual shape** of each input tensor. The backward pass needs the sizes along the concat axis to split the gradient correctly.
 
-🔍 **Line `np.concatenate(inputs, axis=self.axis)`**: NumPy's native concatenation. This is the only operation — no learned parameters.
+🔍 NumPy's native concatenation. This is the only operation — no learned parameters.
 
 📐 **Shape**: `[a, b, c]` where `a.shape = (8, 10)`, `b.shape = (8, 20)`, `c.shape = (8, 30)` with `axis=-1` → `(8, 60)`.
 
@@ -119,15 +125,15 @@ def backward(self, grad_output):
     return np.split(grad_output, indices, axis=self.axis)
 ```
 
-🔍 **Line `indices = np.cumsum(...)`**: Compute the split points from the cached input shapes. `np.cumsum` gives cumulative sums along the concat axis. We drop the last element with `[:-1]` because `np.split` takes split positions.
+🔍 Compute the split points from the cached input shapes. `np.cumsum` gives cumulative sums along the concat axis. We drop the last element with `[:-1]` because `np.split` takes split positions.
 
 📐 **Example**: Input shapes along axis: `[10, 20, 30]`. `np.cumsum([10, 20, 30])` = `[10, 30, 60]`. `[:-1]` = `[10, 30]`. These are the split indices: slice 0..10, 10..30, 30..60.
 
-🔍 **Line `np.split(grad_output, indices, axis=self.axis)`**: Reverse of `np.concatenate`. Splits the gradient along the same axis into the original pieces. Returns a list of gradient tensors matching the input shapes.
+🔍 Reverse of `np.concatenate`. Splits the gradient along the same axis into the original pieces. Returns a list of gradient tensors matching the input shapes.
 
 ---
 
-## Multiply — `merging.py:79`
+## Multiply — `merging.py`
 
 ### What does this layer do?
 
@@ -177,7 +183,7 @@ The autograd engine computes exactly these products.
 
 ---
 
-## Average — `merging.py:84`
+## Average — `merging.py`
 
 ### What does this layer do?
 
@@ -195,7 +201,7 @@ $$
 
 ```python
 def forward(self, inputs, training=False):
-    result = super().forward(inputs, training=training)   # sum via _combine
+    result = super().forward(inputs, training=training) # sum via _combine
     if isinstance(inputs, list) and len(inputs) > 1:
         result = result / float(len(inputs))
     return result
@@ -209,7 +215,7 @@ The derivative of $y = (x_1 + \dots + x_N) / N$ w.r.t. $x_i$ is $1/N$. Each inpu
 
 ---
 
-## Maximum — `merging.py:95`
+## Maximum — `merging.py`
 
 ### What does this layer do?
 
@@ -251,7 +257,7 @@ Neutro uses the tie-case convention: if two inputs are equal, **both** get gradi
 
 ---
 
-## Minimum — `merging.py:100`
+## Minimum — `merging.py`
 
 ### What does this layer do?
 

@@ -5,6 +5,8 @@ from .tanh import Tanh
 from .softmax import Softmax
 from .silu import SiLU
 
+__all__ = ["Activation", "ReLU", "Sigmoid", "Tanh", "Softmax", "SiLU", "get"]
+
 def get(identifier):
     if identifier is None:
         return None

@@ -3,16 +3,15 @@ import inspect
 
 import joblib
 import numpy as np
-from tqdm import tqdm
 
 from .. import losses as losses_module
 from .. import metrics as metrics_module
-from ..callbacks import History
+from .. import optimizers as optimizers_module
 from ..engine.node import Node
 from ..layers.attention.kv_cache import KVCache
 from ..layers.base import Layer
 from ..layers.core.input_layer import InputLayer
-from neutro.autograd import GradientTape, Tensor as AutoTensor, as_tensor
+from neutro.autograd import Tensor as AutoTensor, as_tensor
 
 
 def _iter_layer_tree(root):
@@ -29,6 +28,17 @@ def _iter_layer_tree(root):
 
 
 class Model(Layer):
+    """Base class for trainable models.
+
+    Three construction styles are supported:
+
+    - ``Sequential([...])``: a linear stack of layers.
+    - ``Model(inputs=..., outputs=...)``: the Functional API (a DAG).
+    - Subclassing ``Model`` and overriding ``forward``/``backward``.
+
+    A model owns an optimizer, a loss function, and metrics after ``compile``.
+    """
+
     def __init__(self, inputs=None, outputs=None, name=None):
         super().__init__(name=name)
         self.layers = []
@@ -79,7 +89,19 @@ class Model(Layer):
                 self.layers.append(node.layer)
 
     def compile(self, optimizer, loss, metrics=None):
-        self.optimizer = optimizer
+        """Attach an optimizer, a loss, and metrics to the model.
+
+        Args:
+            optimizer: An ``Optimizer`` instance or a name: ``"sgd"``,
+                ``"adam"``, or ``"adamw"``.
+            loss: A loss instance or a name understood by
+                ``neutro.losses.get`` (``"mse"``,
+                ``"categorical_crossentropy"``,
+                ``"sparse_categorical_crossentropy"``).
+            metrics: Optional list of metric names or instances.
+        """
+        # Accept both Keras-style names ("adam") and optimizer instances.
+        self.optimizer = optimizers_module.get(optimizer)
         if isinstance(loss, str):
             self.loss_fn = losses_module.get(loss)
         else:
@@ -164,194 +186,49 @@ class Model(Layer):
             for m in self.metrics)
 
     def fit(self, x, y=None, epochs=1, batch_size=32, verbose=1, validation_data=None, callbacks=None):
-        """Train the model using manual backward passes (layer.backward)."""
+        """Train the model.
+
+        ``x`` may be a NumPy array, a list of arrays (MIMO), or a generator
+        yielding ``(x_batch, y_batch)``. Each layer's ``backward`` is called;
+        the base implementation of ``backward`` is tape-backed.
+
+        Returns:
+            A ``History`` object with ``history['loss']`` and one list per
+            metric.
+        """
         return self._fit_loop(
             x=x, y=y, epochs=epochs, batch_size=batch_size, verbose=verbose,
             validation_data=validation_data, callbacks=callbacks, use_autograd=False)
 
     def autograd_fit(self, x, y=None, epochs=1, batch_size=32, verbose=1, validation_data=None, callbacks=None):
-        """Train the model using the autograd engine (GradientTape)."""
+        """Train with one ``GradientTape`` around the whole forward + loss.
+
+        This is an alternative to :meth:`fit`. It is useful for seeing the
+        entire computation as a single graph, but ``fit`` is the default and
+        recommended path.
+        """
         return self._fit_loop(
             x=x, y=y, epochs=epochs, batch_size=batch_size, verbose=verbose,
             validation_data=validation_data, callbacks=callbacks, use_autograd=True)
 
     def _fit_loop(self, x, y=None, epochs=1, batch_size=32, verbose=1,
                   validation_data=None, callbacks=None, use_autograd=False):
-        is_mimo_x = isinstance(x, list)
-        is_mimo_y = isinstance(y, list)
-
-        use_generator = False
-        if not is_mimo_x and hasattr(x, '__iter__') and not isinstance(x, np.ndarray):
-            use_generator = True
-            n_samples = len(x) * x.batch_size if hasattr(x, 'batch_size') else len(x)
-        else:
-            if is_mimo_x:
-                n_samples = x[0].shape[0]
-            else:
-                n_samples = x.shape[0]
-
-        history = History()
-        history.set_model(self)
-
-        all_callbacks = [history] + (callbacks or [])
-        for cb in all_callbacks:
-            cb.set_model(self)
-
-        logs = {}
-        for cb in all_callbacks:
-            cb.on_train_begin(logs)
-
-        for epoch in range(epochs):
-            if self.stop_training:
-                break
-            for cb in all_callbacks:
-                cb.on_epoch_begin(epoch, logs)
-
-            epoch_loss = 0
-            epoch_metrics = {m.get_name(): 0 for m in self.metrics}
-
-            if use_generator:
-                num_batches = len(x)
-                data_iter = iter(x)
-            else:
-                indices = np.arange(n_samples)
-                np.random.shuffle(indices)
-
-                if is_mimo_x:
-                    x_shuffled = [xi[indices] for xi in x]
-                else:
-                    x_shuffled = x[indices]
-
-                if is_mimo_y:
-                    y_shuffled = [yi[indices] for yi in y]
-                else:
-                    y_shuffled = y[indices]
-
-                num_batches = int(np.ceil(n_samples / batch_size))
-
-            total_seen = 0
-            if verbose == 1:
-                pbar = tqdm(total=num_batches, desc=f"Epoch {epoch + 1}/{epochs}")
-
-            for i in range(num_batches):
-                if use_generator:
-                    x_batch, y_batch = next(data_iter)
-                else:
-                    start, end = i * batch_size, min((i + 1) * batch_size, n_samples)
-
-                    if is_mimo_x:
-                        x_batch = [xi[start:end] for xi in x_shuffled]
-                    else:
-                        x_batch = x_shuffled[start:end]
-
-                    if is_mimo_y:
-                        y_batch = [yi[start:end] for yi in y_shuffled]
-                    else:
-                        y_batch = y_shuffled[start:end]
-
-                batch_size_actual = x_batch[0].shape[0] if is_mimo_x else len(x_batch)
-                total_seen += batch_size_actual
-
-                for cb in all_callbacks:
-                    cb.on_batch_begin(i, logs)
-
-                batch_loss, output = self._train_on_batch(x_batch, y_batch, use_autograd)
-                epoch_loss += batch_loss * batch_size_actual
-
-                for m in self.metrics:
-                    m_val = self._eval_metric(m, y_batch, output, self._is_mimo(self.outputs))
-                    epoch_metrics[m.get_name()] += m_val * batch_size_actual
-
-                for cb in all_callbacks:
-                    cb.on_batch_end(i, logs)
-
-                if verbose == 1:
-                    postfix = {'loss': f"{epoch_loss / total_seen:.4f}"}
-                    for m in self.metrics:
-                        name = m.get_name()
-                        postfix[name] = f"{epoch_metrics[name] / total_seen:.4f}"
-                    pbar.set_postfix(postfix)
-                    pbar.update(1)
-
-            if verbose == 1:
-                pbar.close()
-
-            logs = {
-                'loss': epoch_loss / total_seen,
-                **{k: v / total_seen for k, v in epoch_metrics.items()}
-            }
-
-            if validation_data:
-                self._update_validation_logs(logs, validation_data)
-
-            for cb in all_callbacks:
-                cb.on_epoch_end(epoch, logs)
-
-            if verbose:
-                if verbose == 1:
-                    if validation_data:
-                        print(f" - val_loss: {logs['val_loss']:.4f}"
-                              + self._metric_summary(logs, 'val_'))
-                else:
-                    msg = (f"Epoch {epoch + 1}/{epochs} - loss: {logs['loss']:.4f}"
-                           + self._metric_summary(logs))
-                    if validation_data:
-                        msg += f" - val_loss: {logs['val_loss']:.4f}" + self._metric_summary(logs, 'val_')
-                    print(msg)
-
-        for cb in all_callbacks:
-            cb.on_train_end(logs)
-        return history
+        """Delegate the epoch/batch loop to :mod:`neutro.models.training`."""
+        from .training import fit_loop
+        return fit_loop(
+            self, x=x, y=y, epochs=epochs, batch_size=batch_size,
+            verbose=verbose, validation_data=validation_data,
+            callbacks=callbacks, use_autograd=use_autograd)
 
     def _train_on_batch(self, x_batch, y_batch, use_autograd):
-        """Run a single training step, returning (batch_loss, output)."""
-        if use_autograd:
-            with GradientTape() as tape:
-                for p in self.trainable_params:
-                    tape.watch(p)
-                output = self.forward(x_batch, training=True)
-                if isinstance(self.outputs, list) and len(self.outputs) > 1:
-                    if isinstance(y_batch, list):
-                        loss = sum(self.loss_fn(y_batch[j], output[j]) for j in range(len(self.outputs)))
-                    else:
-                        loss = sum(self.loss_fn(y_batch, o) for o in output)
-                else:
-                    loss = self.loss_fn(y_batch, output)
-
-            batch_loss = float(loss.data) if isinstance(loss, AutoTensor) else float(loss)
-
-            tape.gradient(loss, self.trainable_params)
-
-            all_trainable_layers = self._get_all_layers()
-            self.optimizer.step(all_trainable_layers)
-            self._zero_all_grads()
-        else:
-            output = self.forward(x_batch, training=True)
-
-            is_mimo_out = self._is_mimo(self.outputs)
-            batch_loss = self._compute_loss(y_batch, output)
-
-            if is_mimo_out:
-                grads = [self.loss_fn.gradient(y_batch[j], output[j]) for j in range(len(self.outputs))]
-                self.backward(grads)
-            else:
-                grad = self.loss_fn.gradient(y_batch, output)
-                self.backward(grad)
-
-            all_trainable_layers = self._get_all_layers()
-            self.optimizer.step(all_trainable_layers)
-
-        return batch_loss, output
+        """Delegate one training step to :mod:`neutro.models.training`."""
+        from .training import train_on_batch
+        return train_on_batch(self, x_batch, y_batch, use_autograd)
 
     def _update_validation_logs(self, logs, validation_data):
-        """Evaluate on validation data and write results into `logs`."""
-        val_x, val_y = validation_data
-        val_output = self.predict(val_x)
-        is_mimo_val_out = self._is_mimo(self.outputs)
-        logs['val_loss'] = self._compute_loss(val_y, val_output)
-        for m in self.metrics:
-            m_val = self._eval_metric(m, val_y, val_output, is_mimo_val_out)
-            logs[f'val_{m.get_name()}'] = m_val
+        """Delegate validation evaluation to :mod:`neutro.models.training`."""
+        from .training import update_validation_logs
+        return update_validation_logs(self, logs, validation_data)
 
     @property
     def trainable_params(self):
@@ -368,6 +245,12 @@ class Model(Layer):
             p.zero_grad()
 
     def forward(self, inputs, training=False, kv_cache=None):
+        """Run inputs through the model.
+
+        Functional models execute their recorded nodes in topological order.
+        Sequential and subclassed models call ``self.layers`` in order, passing
+        ``kv_cache`` to layers that accept it.
+        """
         if self.inputs is not None:
             # Functional API forward pass
             tensor_map = {}
@@ -448,6 +331,12 @@ class Model(Layer):
         return generated
 
     def backward(self, grad):
+        """Propagate ``grad`` backward through the model.
+
+        Functional models walk their nodes in reverse topological order and
+        accumulate gradients for shared layers. Sequential models call each
+        layer's ``backward`` in reverse order.
+        """
         if self.outputs is not None:
             # Functional API backward pass
             grad_map = {}
@@ -553,6 +442,7 @@ class Model(Layer):
         self.built = True
 
     def predict(self, x):
+        """Run inference and return the model output (a ``Tensor``)."""
         return self.forward(x, training=False)
 
     @staticmethod
@@ -562,6 +452,11 @@ class Model(Layer):
         return float(v)
 
     def evaluate(self, x, y):
+        """Compute loss and metrics on ``(x, y)``.
+
+        Returns:
+            ``{"loss": float, "<metric>": float, ...}``.
+        """
         is_mimo_out = self._is_mimo(self.outputs)
         output = self.predict(x)
         loss = self._compute_loss(y, output)
@@ -572,81 +467,28 @@ class Model(Layer):
         return results
 
     def summary(self):
-        """Print a Keras-style summary of the model."""
-        is_functional = self.inputs is not None
-
-        print("-" * 85)
-        if is_functional:
-            print(f"{'Layer (type)':<25} {'Output Shape':<20} {'Param #':<10} {'Connected to':<25}")
-        else:
-            print(f"{'Layer (type)':<25} {'Output Shape':<20} {'Param #':<10}")
-        print("=" * 85)
-
-        total_params = 0
-        trainable_params = 0
-
-        curr_shape = None
-        if self.layers and self.layers[0].input_shape:
-            curr_shape = self.layers[0].input_shape
-
-        for layer in self.layers:
-            name = layer.name or layer.__class__.__name__
-            layer_type = layer.__class__.__name__
-
-            # Use layer's own input/output shapes if built
-            if layer.built:
-                try:
-                    output_shape = layer.compute_output_shape(layer.input_shape)
-                except Exception:
-                    output_shape = "multiple"
-            elif curr_shape is not None:
-                try:
-                    output_shape = layer.compute_output_shape(curr_shape)
-                    curr_shape = output_shape
-                except Exception:
-                    output_shape = "multiple"
-            else:
-                output_shape = "unbuilt"
-
-            params = layer.count_params()
-            total_params += params
-            if getattr(layer, 'trainable', True):
-                trainable_params += params
-
-            if is_functional:
-                # Find which layers this layer is connected to via _inbound_nodes
-                connected_to = []
-                if hasattr(layer, '_inbound_nodes'):
-                    for node in layer._inbound_nodes:
-                        # Only consider nodes that belong to this model's execution path
-                        if node in self._nodes_ordered:
-                            if isinstance(node.input_tensors, list):
-                                for t in node.input_tensors:
-                                    if t.node:
-                                        connected_to.append(t.node.layer.name or t.node.layer.__class__.__name__)
-                            elif node.input_tensors and node.input_tensors.node:
-                                connected_to.append(node.input_tensors.node.layer.name or node.input_tensors.node.layer.__class__.__name__)
-
-                connected_str = ", ".join(connected_to) if connected_to else ""
-                print(f"{f'{name} ({layer_type})':<25} {output_shape!s:<20} {params:<10,} {connected_str:<25}")
-            else:
-                print(f"{f'{name} ({layer_type})':<25} {output_shape!s:<20} {params:<10,}")
-
-        print("=" * 85)
-        print(f"Total params: {total_params:,}")
-        print(f"Trainable params: {trainable_params:,}")
-        print(f"Non-trainable params: {total_params - trainable_params:,}")
-        print("-" * 85)
+        """Print a Keras-style layer/parameter table."""
+        from .summary import print_summary
+        print_summary(self)
 
     def save(self, filepath):
+        """Serialize the whole model with joblib."""
         joblib.dump(self, filepath)
 
     @staticmethod
     def load(filepath):
+        """Load a model previously written by :meth:`save`."""
         return joblib.load(filepath)
 
 
 class Sequential(Model):
+    """A linear stack of layers.
+
+    ``Sequential([Dense(16), Dense(3)])`` calls each layer's output as the next
+    layer's input. ``build`` is triggered by the first layer's ``input_shape``
+    or by the first real call.
+    """
+
     def __init__(self, layers=None):
         super().__init__()
         if layers:
@@ -654,6 +496,7 @@ class Sequential(Model):
                 self.add(layer)
 
     def add(self, layer):
+        """Append ``layer`` and build it from the previous layer's shape."""
         if not self.layers:
             # If it's the first layer and has input_shape, build it
             if layer.input_shape:

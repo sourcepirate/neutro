@@ -8,7 +8,11 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 def as_tensor(x):
-    """Convert ``x`` to :class:`Tensor`, handling common Python / numpy types."""
+    """Convert ``x`` to :class:`Tensor`, handling common Python / NumPy types.
+
+    Lists and tuples are converted element by element, which is useful when a
+    layer accepts multiple inputs.
+    """
     if isinstance(x, Tensor):
         return x
     if isinstance(x, (list, tuple)):
@@ -26,8 +30,12 @@ class Tensor:
     """Thin wrapper around a ``float64`` ndarray.
 
     Attributes:
-        data: contiguous float64 array.
-        grad: gradient array (or ``None``).
+        data: contiguous ``float64`` array.
+        grad: gradient array, or ``None``.
+
+    Unlike PyTorch, a ``Tensor`` has no ``requires_grad`` flag and no
+    ``backward`` method. The active :class:`GradientTape` decides what to
+    record; call ``tape.watch(tensor)`` before differentiating through it.
     """
 
     __slots__ = ("data", "grad")
@@ -143,9 +151,11 @@ class Tensor:
     # -- Utilities ----------------------------------------------------------
 
     def zero_grad(self):
+        """Clear the stored gradient."""
         self.grad = None
 
     def copy(self):
+        """Return a new Tensor with copied data and no gradient."""
         return Tensor(self.data.copy())
 
     def astype(self, dtype):

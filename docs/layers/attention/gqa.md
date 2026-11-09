@@ -1,5 +1,11 @@
 # Grouped Query Attention (GQA)
 
+> **Implementation note:** The current layer relies on the tape-backed
+> `Layer.backward`; it does not define `backward`. The manual code below is
+> illustrative; the forward math and shapes still apply. See
+> [Layer base class](../base.md#backward-the-tape-backed-fallback).
+
+
 ## What does this layer do?
 
 Grouped Query Attention is the **middle ground** between Multi-Head Attention (MHA) and Multi-Query Attention (MQA). Instead of H key/value heads (MHA) or just 1 (MQA), GQA uses **G groups** of key/value heads, where `1 < G < H`. Each group of query heads shares one key/value head.
@@ -9,9 +15,9 @@ GQA was introduced by Ainslie et al. (2023) and is used in models like Llama 2 (
 ## The spectrum of attention variants
 
 ```
-MHA:  H  key heads, H  value heads   ← maximum quality, most memory
-GQA:  G  key heads, G  value heads   ← balanced (sweet spot)
-MQA:  1  key head,  1  value head    ← maximum efficiency, least memory
+MHA: H key heads, H value heads ← maximum quality, most memory
+GQA: G key heads, G value heads ← balanced (sweet spot)
+MQA: 1 key head, 1 value head ← maximum efficiency, least memory
 ```
 
 Where `G` divides `H`, and `heads_per_group = H / G`.
@@ -39,7 +45,7 @@ Each group of `heads_per_group` query heads shares one K/V head.
 
 ### File: `neutro/layers/attention/gqa.py`
 
-### Step 1: `__init__` — line 6
+### Step 1: `__init__`
 
 ```python
 class GroupedQueryAttention(BaseAttention):
@@ -52,13 +58,13 @@ class GroupedQueryAttention(BaseAttention):
         self.heads_per_group = num_heads // num_groups
 ```
 
-🔍 **Line 6**: Inherits from `BaseAttention` — we get the shared `scaled_dot_product_attention` method.
+🔍 Inherits from `BaseAttention` — we get the shared `scaled_dot_product_attention` method.
 
-🔍 **Line 9**: `num_groups` — the number of **key/value groups** (G). This is the knob you turn to trade off quality vs. efficiency.
+🔍 `num_groups` — the number of **key/value groups** (G). This is the knob you turn to trade off quality vs. efficiency.
 
-🔍 **Line 12**: `heads_per_group = num_heads // num_groups` — how many query heads share one K/V head. For example, if `num_heads=32` and `num_groups=8`, then `heads_per_group=4`.
+🔍 `heads_per_group = num_heads // num_groups` — how many query heads share one K/V head. For example, if `num_heads=32` and `num_groups=8`, then `heads_per_group=4`.
 
-### Step 2: `build` — line 14
+### Step 2: `build`
 
 ```python
 def build(self, input_shape):
@@ -69,7 +75,7 @@ def build(self, input_shape):
     super().build(input_shape)
 ```
 
-🔍 **Line 17**: **Compare the weight shapes across the three variants:**
+🔍 **Compare the weight shapes across the three variants:**
 
 | Variant | `Wk` shape | `Wv` shape |
 |---------|-----------|-----------|
@@ -79,9 +85,9 @@ def build(self, input_shape):
 
 Notice that GQA sits right between MHA and MQA: `G·d` where `1 < G < H`.
 
-🔍 **Line 18**: `Wo` is `(key_dim, embed_dim)` — same as always. The output still goes from full `key_dim` back to `embed_dim`.
+🔍 `Wo` is `(key_dim, embed_dim)` — same as always. The output still goes from full `key_dim` back to `embed_dim`.
 
-### Step 3: `forward` — line 21
+### Step 3: `forward`
 
 ```python
 def forward(self, query, value=None, key=None, mask=None, training=False):
@@ -91,7 +97,7 @@ def forward(self, query, value=None, key=None, mask=None, training=False):
     Q = np.dot(query, self.params['Wq']).reshape(batch_size, -1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
 ```
 
-🔍 **Line 25**: **Q projection** — same as MHA. Q still produces H heads.
+🔍 **Q projection** — same as MHA. Q still produces H heads.
 
 📐 `(B, S, D) @ (D, key_dim)` → `(B, S, H·d)` → reshaped to `(B, H, S, d)`
 
@@ -99,7 +105,7 @@ def forward(self, query, value=None, key=None, mask=None, training=False):
     K, V = np.dot(key, self.params['Wk']).reshape(batch_size, -1, self.num_groups, self.head_dim).transpose(0, 2, 1, 3), np.dot(value, self.params['Wv']).reshape(batch_size, -1, self.num_groups, self.head_dim).transpose(0, 2, 1, 3)
 ```
 
-🔍 **Line 26**: **K and V projections** — note `num_groups` in the reshape, not `num_heads`!
+🔍 **K and V projections** — note `num_groups` in the reshape, not `num_heads`!
 
 📐 K shape: `(B, S, G·d)` → reshape to `(B, S, G, d)` → transpose to `(B, G, S, d)`
 
@@ -107,7 +113,7 @@ def forward(self, query, value=None, key=None, mask=None, training=False):
     K, V = np.repeat(K, self.heads_per_group, axis=1), np.repeat(V, self.heads_per_group, axis=1)
 ```
 
-🔍 **Line 27**: **This is the core GQA operation!** `np.repeat` along axis=1 (the head/group dimension) copies each group `heads_per_group` times.
+🔍 **This is the core GQA operation!** `np.repeat` along axis=1 (the head/group dimension) copies each group `heads_per_group` times.
 
 📐 **Shape transformation**:
 - Before repeat: K is `(B, G, S, d)` — G groups.
@@ -120,23 +126,23 @@ def forward(self, query, value=None, key=None, mask=None, training=False):
     attn_output = self.scaled_dot_product_attention(Q, K, V, mask)
 ```
 
-🔍 **Line 28**: Now both Q and K have shape `(B, H, S, d)` — SDPA works identically to MHA. The only difference is that K/V heads within a group are identical.
+🔍 Now both Q and K have shape `(B, H, S, d)` — SDPA works identically to MHA. The only difference is that K/V heads within a group are identical.
 
 ```python
     out = attn_output.transpose(0, 2, 1, 3).reshape(batch_size, -1, self.key_dim)
     return np.dot(out, self.params['Wo'])
 ```
 
-🔍 **Lines 29–30**: Merge heads and output projection — identical to MHA.
+🔍 Merge heads and output projection — identical to MHA.
 
-### Step 4: `backward` — line 32
+### Step 4: `backward`
 
 ```python
 def backward(self, grad_output):
     return None
 ```
 
-🔍 **Line 32**: The GQA backward is also a **placeholder**. A full implementation would:
+🔍 The GQA backward is also a **placeholder**. A full implementation would:
 1. Follow MHA's backward for the attention math (dWo, d_attn, dQ, dK, dV).
 2. **Sum dK and dV across each group** (all query heads in a group share the same K/V, so their gradients must be summed).
 3. Use `heads_per_group` to determine which dK slices to sum.
@@ -146,10 +152,10 @@ This is intentionally left as an exercise — it's a great way to test your unde
 ## Visual summary: how GQA's groups work
 
 ```
-Query heads:    [Q0, Q1, Q2, Q3 | Q4, Q5, Q6, Q7 | Q8, Q9, Q10, Q11 | ...]
-                     |    |    |      |    |    |      |    |     |    |
-K/V groups:         [   K0, V0   |    K1, V1     |     K2, V2      | ...]
-                                                     
+Query heads: [Q0, Q1, Q2, Q3 | Q4, Q5, Q6, Q7 | Q8, Q9, Q10, Q11 | ...]
+                     | | | | | | | | | |
+K/V groups: [ K0, V0 | K1, V1 | K2, V2 | ...]
+
 heads_per_group = 4, num_groups = num_heads / 4
 ```
 
@@ -165,7 +171,7 @@ import numpy as np
 layer = GroupedQueryAttention(num_heads=32, num_groups=8, key_dim=2048)
 x = np.random.randn(16, 20, 512)
 layer.build(x.shape)
-y = layer(x)  # forward works, shape (16, 20, 512)
+y = layer(x) # forward works, shape (16, 20, 512)
 ```
 
 ## References

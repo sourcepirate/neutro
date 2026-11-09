@@ -1,42 +1,51 @@
 # TransformerBlock
 
-## What does this layer do?
+The transformer block is the repeating unit of GPT, Llama, Qwen, and most
+modern language models. It combines self-attention with a feed-forward network,
+residual connections, and normalization.
 
-The Transformer block is the fundamental building block of LLMs like GPT and BERT. It combines self-attention with a feed-forward network, using residual connections and layer normalization to keep training stable even in very deep stacks.
+Source: `neutro/layers/transformer/transformer_block.py`.
 
-## The architecture
+---
+
+## What it computes
 
 Two variants:
 
-### Pre-Norm (modern, used in GPT-2, Llama)
+### Pre-Norm (GPT-2, Llama, Qwen)
 
-```
-output = x + FFN(LayerNorm(x + Attention(LayerNorm(x))))
-```
-
-### Post-Norm (original Transformer, used in BERT)
-
-```
-output = LayerNorm(x + FFN(LayerNorm(x + Attention(x))))
+```text
+h = x + Dropout(Attention(LayerNorm(x)))
+out = h + Dropout(FFN(LayerNorm(h)))
 ```
 
-Pre-Norm is more stable during training because the norm is applied BEFORE each sub-layer, keeping activations controlled. Post-Norm was used in the original "Attention Is All You Need" paper but drifted gradients for deep stacks.
+### Post-Norm (original Transformer, BERT)
 
-## Walking through the code
+```text
+out1 = LayerNorm(x + Dropout(Attention(x)))
+out = LayerNorm(out1 + Dropout(FFN(out1)))
+```
 
-### Step 1: `__init__` (lines 11–25) — assembling the sub-layers
+Pre-norm keeps activations controlled before each sub-layer and is more stable
+for deep stacks. Post-norm is the original paper's ordering.
+
+---
+
+## `__init__`
 
 ```python
-def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1, causal=False, use_flash=False, pre_norm=False, **kwargs):
+def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1,
+             causal=False, use_flash=False, pre_norm=False, **kwargs):
     super().__init__(**kwargs)
     self.num_heads = num_heads
     self.embed_dim = embed_dim
     self.causal = causal
     self.pre_norm = pre_norm
     if use_flash:
-        self.att = FlashAttention(num_heads=num_heads, key_dim=embed_dim)
+        self.attention = FlashAttention(num_heads=num_heads, key_dim=embed_dim)
     else:
-        self.att = MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
+        self.attention = MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
+    self.att = self.attention # backwards-compatible alias
     self.ffn = [Dense(ff_dim, activation="relu"), Dense(embed_dim)]
     self.layernorm1 = LayerNormalization(epsilon=1e-6)
     self.layernorm2 = LayerNormalization(epsilon=1e-6)
@@ -44,21 +53,26 @@ def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1, causal=False, use_fla
     self.dropout2 = Dropout(rate)
 ```
 
-🔍 **Line 17–20**: `self.att = FlashAttention(...)` or `MultiHeadAttention(...)` — the attention sub-layer. The `use_flash` flag lets you pick between regular MHA and the memory-efficient FlashAttention variant.
+- `self.attention` — attention. `use_flash=True` selects `FlashAttention`, which
+  in this repository is the simplified attention implementation. See
+  [FlashAttention](../attention/flash_attention.md). `self.att` is kept as a
+  backward-compatible alias.
+- `self.ffn` — a **list** of two Dense layers: expand to `ff_dim`, project back
+  to `embed_dim`.
+- `self.layernorm1/2` — pre-attention and pre-FFN norms (or post-norm in the
+  post-norm variant).
+- `self.dropout1/2` — dropout after attention and after the FFN.
 
-🔍 **Line 21**: `self.ffn = [Dense(ff_dim, activation='relu'), Dense(embed_dim)]` — a 2-layer MLP stored as a LIST. The first Dense expands from `embed_dim` to `ff_dim` with ReLU, the second projects back to `embed_dim`.
+`Layer.sublayers` traverses attributes and lists, so the optimizer finds the
+attention, both Dense layers, both norms, and both dropouts automatically.
 
-🔍 **Lines 22–23**: `self.layernorm1`, `self.layernorm2` — two layer norms, one before attention and one before the FFN.
+---
 
-🔍 **Lines 24–25**: `self.dropout1`, `self.dropout2` — dropout applied after each sub-layer for regularization.
-
-🧠 "The sublayers are stored as plain attributes (including a list for `ffn`), so `Layer.sublayers` can traverse and find them all automatically for the optimizer."
-
-### Step 2: `build` (lines 27–37) — building the sub-layers in order
+## `build`
 
 ```python
 def build(self, input_shape):
-    self.att.build(input_shape)
+    self.attention.build(input_shape)
     curr_shape = input_shape
     for layer in self.ffn:
         layer.build(curr_shape)
@@ -67,19 +81,30 @@ def build(self, input_shape):
     self.layernorm2.build(input_shape)
     self.dropout1.build(input_shape)
     self.dropout2.build(input_shape)
-    super().build(input_shape)
+    super.build(input_shape)
 ```
 
-🔍 **Lines 29–32**: The `ffn` list is built sequentially. The first `Dense(ff_dim)` takes the embedding shape; the second `Dense(embed_dim)` takes the expanded shape. The `curr_shape` is updated after each build so the next layer knows what to expect.
+The FFN layers are built in sequence: the first expands the last dimension to
+`ff_dim`, the second projects back to `embed_dim`. Norms and dropout do not
+change the shape.
 
-🔍 **Lines 33–36**: Layer norms and dropouts take the same input shape — they don't change the dimension, they just transform values.
+Shape walkthrough:
 
-### Step 3: `forward` (lines 42–80) — pre-norm vs post-norm
+```text
+input: (B, S, D)
+attention: (B, S, D)
+ffn[0]: (B, S, ff_dim)
+ffn[1]: (B, S, D)
+output: (B, S, D)
+```
 
-First, a shared preamble (lines 43–55):
+---
+
+## `forward`
+
+### Causal mask
 
 ```python
-self.inputs = inputs
 mask = None
 if self.causal:
     mask = BaseAttention.create_causal_mask(inputs.shape[1])
@@ -88,111 +113,89 @@ if self.causal:
         kv_len = q_len + kv_cache.k_cache[layer_id].shape[2]
         mask = np.ones((q_len, kv_len))
         mask[:, -q_len:] = BaseAttention.create_causal_mask(q_len)
-        mask[:, :-q_len] = 0
+        mask[:,:-q_len] = 0
 ```
 
-🔍 **Lines 45–55**: The causal mask prevents attending to future tokens (autoregressive generation). When a KV cache is active, the mask expands to cover all past cached tokens plus the current ones — past tokens are fully visible (0 mask), current tokens use a triangular causal mask.
+- During training, the mask is a `(S, S)` upper-triangular matrix. A `1` means
+  "not allowed"; attention adds `-1e9` there, so softmax ignores it.
+- During cached generation, the mask covers the cached past plus the current
+  token. Past tokens are fully visible (`0`); current tokens use the triangular
+  mask.
 
-**Pre-Norm path** (lines 57–68):
+### Pre-norm path
 
 ```python
-if self.pre_norm:
-    norm1 = self.layernorm1(inputs, training=training)
-    attn_output = self.att(norm1, mask=mask, training=training, kv_cache=kv_cache, layer_id=layer_id)
-    attn_dropped = self.dropout1(attn_output, training=training)
-    h = inputs + attn_dropped
+norm1 = self.layernorm1(inputs, training=training)
+attn_output = self.attention(norm1, mask=mask, training=training,
+                             kv_cache=kv_cache, layer_id=layer_id)
+attn_dropped = self.dropout1(attn_output, training=training)
+h = inputs + attn_dropped
 
-    norm2 = self.layernorm2(h, training=training)
-    ffn_1 = self.ffn[0](norm2, training=training)
-    ffn_2 = self.ffn[1](ffn_1, training=training)
-    ffn_dropped = self.dropout2(ffn_2, training=training)
-    return h + ffn_dropped
+norm2 = self.layernorm2(h, training=training)
+ffn_1 = self.ffn[0](norm2, training=training)
+ffn_2 = self.ffn[1](ffn_1, training=training)
+ffn_dropped = self.dropout2(ffn_2, training=training)
+return h + ffn_dropped
 ```
 
-🔍 **Line 62**: `h = inputs + attn_dropped` — the residual (skip) connection for the attention sub-layer. The original input is added back after attention + dropout, creating a direct gradient highway.
+The two `+` operations are the residual connections. They give gradients a
+direct path from the output back to the input.
 
-🔍 **Lines 64–67**: The FFN path: first expand with ReLU, then project back. Dropout is applied to the final FFN output.
-
-🔍 **Line 68**: `return h + ffn_dropped` — the second residual connection. The output of the attention path (`h`) is added to the FFN output.
-
-**Post-Norm path** (lines 69–80):
+### Post-norm path
 
 ```python
-else:
-    attn_output = self.att(inputs, mask=mask, training=training, kv_cache=kv_cache, layer_id=layer_id)
-    attn_dropped = self.dropout1(attn_output, training=training)
-    self.out1_pre_ln = inputs + attn_dropped
-    out1 = self.layernorm1(self.out1_pre_ln, training=training)
+attn_output = self.attention(inputs, mask=mask, training=training,
+                             kv_cache=kv_cache, layer_id=layer_id)
+attn_dropped = self.dropout1(attn_output, training=training)
+out1 = self.layernorm1(inputs + attn_dropped, training=training)
 
-    ffn_1 = self.ffn[0](out1, training=training)
-    ffn_2 = self.ffn[1](ffn_1, training=training)
-    ffn_dropped = self.dropout2(ffn_2, training=training)
-    self.out2_pre_ln = out1 + ffn_dropped
-    return self.layernorm2(self.out2_pre_ln, training=training)
+ffn_1 = self.ffn[0](out1, training=training)
+ffn_2 = self.ffn[1](ffn_1, training=training)
+ffn_dropped = self.dropout2(ffn_2, training=training)
+return self.layernorm2(out1 + ffn_dropped, training=training)
 ```
 
-🔍 **Lines 71–73**: Attention is applied FIRST, then dropout, then the residual is added. Only AFTER the residual is the layer norm applied. This is the reverse order from pre-norm.
+---
 
-🔍 **Lines 79–80**: Same pattern for the FFN — add residual first, then normalize at the very end.
+## Backward
 
-🔍 **Lines 73 & 79**: `self.out1_pre_ln` and `self.out2_pre_ln` are stored as attributes. These are intermediates needed by the backward pass (since post-norm applies norm after the residual, backward needs the pre-norm values).
+`TransformerBlock` does **not** define `backward`. The base
+`Layer.backward` replays `forward` inside a `GradientTape` and computes
+gradients for every sublayer. This is the tape-backed path described in
+[Layer base class](../base.md#backward-the-tape-backed-fallback).
 
-### Step 4: `backward` (lines 82–107) — manual skip-connection gradient routing
+The residual gradient routing you might expect:
 
-**Pre-Norm backward** (lines 83–96):
-
-```python
-if self.pre_norm:
-    grad_ffn_path = self.dropout2.backward(grad_output)
-    grad_ffn = self.ffn[1].backward(grad_ffn_path)
-    grad_ffn = self.ffn[0].backward(grad_ffn)
-    grad_norm2 = self.layernorm2.backward(grad_ffn)
-    grad_h = grad_output + grad_norm2
-
-    grad_attn_path = self.dropout1.backward(grad_h)
-    grad_attn = self.att.backward(grad_attn_path)
-    grad_norm1 = self.layernorm1.backward(grad_attn)
-    return grad_h + grad_norm1
+```text
+pre-norm:
+  d h = d output + d FFN path
+  d input = d h + d attention path
+post-norm:
+  d layernorm2 -> d FFN path and d residual
 ```
 
-🔍 **Line 90**: `grad_h = grad_output + grad_norm2` — the skip connection in backward. `grad_output` is the gradient flowing directly through the skip connection (bypassing the FFN). `grad_norm2` is the gradient that came through the FFN path. They sum at the branch point. This is what makes training deep networks possible!
+Those sums are computed by the tape's reverse pass, not by hand-written code in
+this class.
 
-🔍 **Line 96**: `return grad_h + grad_norm1` — same pattern again. The gradient splits at the first residual connection: one copy goes straight back to the input (via the skip), the other goes through the attention sub-layer.
+---
 
-🔍 "Without skip connections, gradients would shrink through every layer (vanishing gradient). With skips, the gradient has a direct path from output to input — notice how `grad_output` appears directly in the return value on line 96."
+## What to notice
 
-**Post-Norm backward** (lines 97–107):
+- **The FFN is a list.** `Layer.sublayers` and the optimizer traverse lists,
+  so no manual registration is needed.
+- **`training` is threaded through every sublayer.** Dropout is only active
+  during training.
+- **The KV cache is optional.** During training it is `None`; during generation
+  it carries past keys/values per layer.
+- **Pre-norm vs post-norm changes the data flow.** The backward pass follows
+  automatically because it is tape-based.
 
-```python
-else:
-    grad = self.layernorm2.backward(grad_output)
-    grad_ffn_path = self.dropout2.backward(grad)
-    grad_ffn = self.ffn[1].backward(grad_ffn_path)
-    grad_ffn = self.ffn[0].backward(grad_ffn)
-    grad_out1 = self.layernorm1.backward(grad + grad_ffn)
+---
 
-    grad_attn_path = self.dropout1.backward(grad_out1)
-    grad_attn = self.att.backward(grad_attn_path)
-    return grad_out1 + grad_attn
-```
+## Read next
 
-🔍 **Line 99**: The first thing backward does is go through `layernorm2` — the reverse of the forward order where layernorm was the last step.
-
-🔍 **Line 103**: `grad + grad_ffn` combines the gradient from the second residual connection before passing through `layernorm1`'s backward.
-
-🔍 **Line 107**: `return grad_out1 + grad_attn` — the gradient from the first residual connection. Notice how the post-norm backward stores intermediates (`self.out1_pre_ln`) that were computed during forward — this is needed because `LayerNormalization.backward` uses the pre-norm input to compute its gradient.
-
-## Putting it all together
-
-- The `TransformerBlock` contains 7 sublayers: 1 attention layer, 2 Dense layers (in a list), 2 layer norms, and 2 dropout layers.
-- These sublayers are automatically discovered by `Layer.sublayers` because they're stored as attributes.
-- They're built individually in `build` since each expects a different input shape (especially the two Dense layers in `ffn`).
-- Parameters are collected by the optimizer via `_get_all_layers`, which traverses the sublayer tree.
-- The block handles routing between sublayers manually (forward calls each one in sequence; backward reverses the sequence) rather than delegating to a `Model`.
-
-## Common patterns
-
-- **"The `ffn` is a `list` of `Dense` layers"** — this is why `Layer.sublayers` has special handling to iterate over lists found as attributes.
-- **"Dropout is only active during training"** — the `training` flag is threaded through every sub-layer call. At inference, dropout is a no-op.
-- **"The KV cache is optional"** — it's only populated and used during autoregressive generation. During training, `kv_cache` is `None`.
-- **"Pre-norm vs post-norm changes the forward AND backward pass"** — both the data flow and gradient flow are inverted. Post-norm also needs intermediate buffers (`out1_pre_ln`, `out2_pre_ln`) for the backward pass.
+- [MultiHeadAttention](../attention/mha.md)
+- [FlashAttention (simplified)](../attention/flash_attention.md)
+- [LayerNormalization](../normalization/layernorm.md)
+- [Dense](../core/dense.md)
+- [Layer base class](../base.md)

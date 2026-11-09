@@ -34,7 +34,7 @@ $$\tanh'(x) = 1 - \tanh^2(x)$$
 $$\text{Softmax}(x_i) = \frac{e^{x_i}}{\sum_j e^{x_j}}$$
 
 - Output: probability distribution over classes.
-- **Jacobian-Vector Product** (`gradient_fast`, line 18): computes $y * (\text{grad\_output} - \sum(y * \text{grad\_output}))$ without building the full $N \times N$ Jacobian.
+- **Jacobian-Vector Product** (`gradient_fast`, ): computes $y * (\text{grad\_output} - \sum(y * \text{grad\_output}))$ without building the full $N \times N$ Jacobian.
 
 ### SiLU — `neutro/activations/silu.py` (Sigmoid Linear Unit)
 
@@ -50,9 +50,9 @@ All activations follow the same pattern:
 
 ```python
 class ReLU:
-    def forward(self, x): ...
-    def gradient(self, x): ...        # element-wise gradient
-    def gradient_fast(self, x, grad): ...  # fused JVP (optional)
+    def forward(self, x):...
+    def gradient(self, x):... # element-wise gradient
+    def gradient_fast(self, x, grad):... # fused JVP (optional)
 ```
 
 - `forward` is used by `Dense` and other layers in the forward pass.
@@ -66,8 +66,8 @@ from neutro.activations import get_activation
 
 relu = get_activation('relu')
 x = np.array([-1, 0, 2])
-y = relu(x)          # [0, 0, 2]
-dy = relu.gradient(x)  # [0, 0, 1]
+y = relu(x) # [0, 0, 2]
+dy = relu.gradient(x) # [0, 0, 1]
 ```
 
 ## References

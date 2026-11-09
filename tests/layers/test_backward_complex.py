@@ -33,8 +33,8 @@ def test_rmsnorm_backward():
     dx = layer.backward(grad_output)
     
     assert dx.shape == x.shape
-    assert 'weight' in layer.grads
-    assert layer.grads['weight'].shape == (dim,)
+    assert 'gamma' in layer.grads
+    assert layer.grads['gamma'].shape == (dim,)
 
 def test_llama_mlp_backward():
     dim = 16

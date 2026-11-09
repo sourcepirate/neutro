@@ -35,4 +35,6 @@ coverage.xml
 
 # Project-specific
 *.joblib
+logs/
 .DS_Store
+site/

@@ -1,0 +1,67 @@
+site_name: Neutro
+site_description: A NumPy-only, Keras-style deep learning library built to be read.
+repo_url: https://github.com/sourcepirate/neutro
+repo_name: sourcepirate/neutro
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - search.highlight
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: README.md
+  - Start Here: START_HERE.md
+  - Tutorials:
+      - Your first model: tutorials/01-first-model.md
+      - Gradients and the tape: tutorials/02-gradients-and-the-tape.md
+      - Attention from scratch: tutorials/03-attention-from-scratch.md
+      - A tiny transformer LM: tutorials/04-tiny-transformer-lm.md
+      - Manual backprop: tutorials/05-manual-backprop.md
+      - Tokenization: tutorials/06-tokenization.md
+      - LoRA fine-tuning: tutorials/07-lora-finetuning.md
+  - How-to:
+      - Run examples: how-to/run-examples.md
+      - Train on MNIST: how-to/train-mnist.md
+  - Understand:
+      - Architecture map: ARCHITECTURE.md
+      - Glossary: GLOSSARY.md
+      - API conventions: API_CONVENTIONS.md
+      - Layer lifecycle: layers/base.md
+      - Dense layer: layers/core/dense.md
+      - Autograd engine: autograd/autograd.md
+      - Multi-Head Attention: layers/attention/mha.md
+      - Transformer block: layers/transformer/transformer_block.md
+      - Model and Sequential: models/model.md
+  - Reference:
+      - Full docs index: README.md
+      - Implementation status: IMPLEMENTATION_STATUS.md
+      - Activations: activations/activations.md
+      - Optimizers: optimizers/optimizers.md
+      - Losses: losses/losses.md
+      - Metrics: metrics/metrics.md
+      - Tokenizers: tokenizers/tokenizers.md
+      - Data: data/data.md
+      - Engine: engine/node.md

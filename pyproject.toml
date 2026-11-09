@@ -21,3 +21,10 @@ test = [
     "pytest>=9.0",
     "pytest-cov>=6.0",
 ]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
